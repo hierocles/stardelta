@@ -4,6 +4,11 @@ version = "0.0.1"
 description = "xdelta3 patcher for Starfield UIs"
 authors = ["Dylan Henrich"]
 edition = "2021"
+license = "MIT"
+license-file = "LICENSE"
+documentation = "README.md"
+keywords = ["stardelta", "xdelta3", "starfield"]
+categories = ["utilities"]
 build = "build.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
