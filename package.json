@@ -1,7 +1,7 @@
 {
   "name": "stardelta",
   "private": true,
-  "version": "0.0.2",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "format": "prettier --write \"src/**/*.ts\" && prettier --write \"src/**/*.tsx\" && prettier --write *.json && prettier --write .*.json && prettier --write *.ts && prettier --write *.js",
@@ -22,7 +22,7 @@
     "clsx": "^2.1.0",
     "google-fonts": "^1.0.0",
     "react": "^19.0.0",
-    "react-dom": "^18.2.0",
+    "react-dom": "^19.0.0",
     "tailwind-merge": "^2.2.2",
     "tailwindcss-animate": "^1.0.7"
   },
