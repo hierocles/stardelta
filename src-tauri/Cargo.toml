@@ -15,9 +15,7 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 xdelta3 = "0.1.5"
-tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"
-tauri-plugin-shell = "2"
 tauri-plugin-log = "2"
 log = "0.4"
 

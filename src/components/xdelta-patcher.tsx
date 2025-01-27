@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Label } from "@/components/ui/label"
-import { Progress } from "@/components/ui/progress"
 import { open } from '@tauri-apps/plugin-dialog'
 import { invoke } from "@tauri-apps/api/core"
 import { warn, debug, trace, info, error } from '@tauri-apps/plugin-log';
@@ -43,19 +42,13 @@ export default function XDeltaPatcher() {
   })
 
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null)
-  const [progress, setProgress] = useState<number>(0)
-  const [isPatching, setIsPatching] = useState<boolean>(false)
 
   const handleCreatePatch = async () => {
     try {
-      setIsPatching(true)
-      setProgress(0)
-
       const { originalFilePath, editedFilePath, outputDir } = createPatchInputs
 
       if (!originalFilePath || !editedFilePath) {
         setResult({ success: false, message: "Please select both original and edited files." })
-        setIsPatching(false)
         return
       }
 
@@ -68,26 +61,19 @@ export default function XDeltaPatcher() {
         }
       })
       if (patch) {
-        setProgress(100)
         setResult({ success: true, message: "Patch created and saved successfully!" })
       }
     } catch (error) {
       setResult({ success: false, message: "Failed to create patch." + error })
-    } finally {
-      setIsPatching(false)
     }
   }
 
   const handleApplyPatch = async () => {
     try {
-      setIsPatching(true)
-      setProgress(0)
-
       const { fileToPatchPath, patchFilePath, outputDir } = applyPatchInputs
 
       if (!fileToPatchPath || !patchFilePath) {
         setResult({ success: false, message: "Please select both the file to patch and the patch file." })
-        setIsPatching(false)
         return
       }
 
@@ -100,14 +86,11 @@ export default function XDeltaPatcher() {
         }
       })
       if (decoded) {
-        setProgress(100)
         setResult({ success: true, message: "Patch applied successfully." })
       }
     } catch (error) {
       console.error("Error applying patch:", error)
       setResult({ success: false, message: "Failed to apply patch." + error })
-    } finally {
-      setIsPatching(false)
     }
   }
 
@@ -260,11 +243,6 @@ export default function XDeltaPatcher() {
             <AlertTitle>{result.success ? "Success" : "Error"}</AlertTitle>
             <AlertDescription>{result.message}</AlertDescription>
           </Alert>
-        )}
-        {isPatching && (
-          <div className="mt-4">
-            <Progress value={progress} />
-          </div>
         )}
       </CardFooter>
     </Card>
