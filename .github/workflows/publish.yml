@@ -11,6 +11,9 @@ concurrency:
 
 jobs:
   build-binaries:
+    permissions:
+      contents: write
+
     strategy:
       fail-fast: false
       matrix:
@@ -26,18 +29,18 @@ jobs:
           node-version: 20
 
       - name: install Rust stable
-        uses: actions-rs/toolchain@v1
+        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af
         with:
           toolchain: stable
 
-      - uses: JonasKruckenberg/tauri-build@v1
+      - uses: JonasKruckenberg/tauri-build@0cc18d603182007013b77b070e2a0a46e2b7d3c5
         id: tauri_build
         with:
           projectPath: ./src-tauri
           configPath: ./src-tauri/tauri.conf.json
 
       # The `artifacts` output can now be used by a different action to upload the artifacts
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4.6.0
         with:
           name: artifacts
           path: "${{ join(fromJSON(steps.tauri_build.outputs.artifacts), '\n') }}"
@@ -55,7 +58,7 @@ jobs:
           path: artifacts
       # And create a release with the artifacts attached
       - name: 'create release'
-        uses: softprops/action-gh-release@master
+        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda
         env:
           GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
         with:
