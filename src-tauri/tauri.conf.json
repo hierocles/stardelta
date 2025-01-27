@@ -1,0 +1,38 @@
+{
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420"
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/icon.png",
+      "icons/icon.ico"
+    ]
+  },
+  "productName": "StarDelta",
+  "mainBinaryName": "stardelta",
+  "version": "0.0.1",
+  "identifier": "com.stardelta.app",
+  "plugins": {},
+  "app": {
+    "withGlobalTauri": true,
+    "security": {
+      "csp": null,
+      "capabilities": []
+    },
+    "windows": [
+      {
+        "title": "StarDelta",
+        "useHttpsScheme": true,
+        "fullscreen": false,
+        "resizable": true,
+        "width": 600,
+        "height": 750
+      }
+    ]
+  }
+}
