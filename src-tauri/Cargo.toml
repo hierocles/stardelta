@@ -19,6 +19,9 @@ xdelta3 = "0.1.5"
 tauri-plugin-dialog = "2"
 tauri-plugin-log = "2"
 log = "0.4"
+tauri-plugin-devtools = "2.0.0"
+tauri-plugin-devtools-app = "2.0.0"
+tauri-plugin-decorum = "1.1.1"
 
 [features]
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!

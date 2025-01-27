@@ -14,7 +14,6 @@
     ]
   },
   "productName": "StarDelta",
-  "mainBinaryName": "stardelta",
   "version": "0.0.1",
   "identifier": "com.stardelta.app",
   "plugins": {},
@@ -27,11 +26,13 @@
     "windows": [
       {
         "title": "StarDelta",
-        "useHttpsScheme": true,
         "fullscreen": false,
         "resizable": true,
         "width": 600,
-        "height": 750
+        "height": 750,
+        "center": true,
+        "closable": true,
+        "decorations": true
       }
     ]
   }
