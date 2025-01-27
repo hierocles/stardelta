@@ -59,12 +59,12 @@ export default function XDeltaPatcher() {
         return
       }
 
-      const patch = await invoke('create_patch', { 
+      const patch = await invoke('create_patch', {
         args: {
-          original_file_path: originalFilePath, 
-          edited_file_path: editedFilePath, 
-          output_dir: outputDir, 
-          original_file_name: originalFilePath.split('\\').pop() 
+          original_file_path: originalFilePath,
+          edited_file_path: editedFilePath,
+          output_dir: outputDir,
+          original_file_name: originalFilePath.split('\\').pop()
         }
       })
       if (patch) {
@@ -91,12 +91,12 @@ export default function XDeltaPatcher() {
         return
       }
 
-      const decoded = await invoke('apply_patch', { 
+      const decoded = await invoke('apply_patch', {
         args: {
-          file_to_patch_path: fileToPatchPath, 
-          patch_file_path: patchFilePath, 
-          output_dir: outputDir, 
-          file_to_patch_name: fileToPatchPath.split('\\').pop() 
+          file_to_patch_path: fileToPatchPath,
+          patch_file_path: patchFilePath,
+          output_dir: outputDir,
+          file_to_patch_name: fileToPatchPath.split('\\').pop()
         }
       })
       if (decoded) {
@@ -270,4 +270,3 @@ export default function XDeltaPatcher() {
     </Card>
   )
 }
-
