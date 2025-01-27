@@ -9,9 +9,6 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Label } from "@/components/ui/label"
 import { open } from '@tauri-apps/plugin-dialog'
 import { invoke } from "@tauri-apps/api/core"
-import { trace, info, error, attachConsole } from '@tauri-apps/plugin-log';
-
-const detach = await attachConsole();
 
 export default function XDeltaPatcher() {
   const [createPatchInputs, setCreatePatchInputs] = useState({
@@ -31,7 +28,7 @@ export default function XDeltaPatcher() {
   const handleCreatePatch = async () => {
     try {
       const { originalFilePath, editedFilePath, outputDir } = createPatchInputs
-      trace(`Creating patch with originalFilePath: ${originalFilePath}, editedFilePath: ${editedFilePath}, outputDir: ${outputDir}`)
+      console.log(`Creating patch with originalFilePath: ${originalFilePath}, editedFilePath: ${editedFilePath}, outputDir: ${outputDir}`)
 
       if (!originalFilePath || !editedFilePath) {
         setResult({ success: false, message: "Please select both original and edited files." })
@@ -48,18 +45,18 @@ export default function XDeltaPatcher() {
       })
       if (patch) {
         setResult({ success: true, message: "Patch created and saved successfully!" })
-        info("Patch created successfully")
+        console.info("Patch created successfully")
       }
     } catch (err: any) {
       setResult({ success: false, message: "Failed to create patch." + err })
-      error("Failed to create patch: " + err)
+      console.error("Failed to create patch: " + err)
     }
   }
 
   const handleApplyPatch = async () => {
     try {
       const { fileToPatchPath, patchFilePath, outputDir } = applyPatchInputs
-      trace(`Applying patch with fileToPatchPath: ${fileToPatchPath}, patchFilePath: ${patchFilePath}, outputDir: ${outputDir}`)
+      console.log(`Applying patch with fileToPatchPath: ${fileToPatchPath}, patchFilePath: ${patchFilePath}, outputDir: ${outputDir}`)
 
       if (!fileToPatchPath || !patchFilePath) {
         setResult({ success: false, message: "Please select both the file to patch and the patch file." })
@@ -76,11 +73,11 @@ export default function XDeltaPatcher() {
       })
       if (decoded) {
         setResult({ success: true, message: "Patch applied successfully." })
-        info("Patch applied successfully")
+        console.info("Patch applied successfully")
       }
     } catch (err: any) {
       setResult({ success: false, message: "Failed to apply patch." + err })
-      error("Failed to apply patch: " + err)
+      console.error("Failed to apply patch: " + err)
     }
   }
 
@@ -248,5 +245,3 @@ export default function XDeltaPatcher() {
     </Card>
   )
 }
-
-detach();
