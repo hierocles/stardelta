@@ -6,7 +6,9 @@ use std::path::PathBuf;
 use xdelta3::encode;
 use xdelta3::decode;
 use serde::{Deserialize, Serialize};
-use tauri_plugin_log;
+use tauri::Manager;
+use tauri_plugin_decorum::WebviewWindowExt;
+
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CreatePatchArgs {
@@ -76,14 +78,20 @@ fn apply_patch(args: ApplyPatchArgs) -> Result<(), String> {
 
 pub fn run() {
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    #[cfg(debug_assertions)]
+    let builder = builder.plugin(tauri_plugin_devtools::init()).plugin(tauri_plugin_devtools_app::init());
+
+    builder
         .invoke_handler(tauri::generate_handler![create_patch, apply_patch])
+        .plugin(tauri_plugin_decorum::init())
+        .setup(|app| {
+            let main_window = app.get_webview_window("main").unwrap();
+            main_window.create_overlay_titlebar().unwrap();
+            Ok(())
+        })
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_log::Builder::new()
-            .target(tauri_plugin_log::Target::new(
-                tauri_plugin_log::TargetKind::Webview,
-            ))
-            .build())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
