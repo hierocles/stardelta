@@ -1707,6 +1707,51 @@
           "const": "core:window:deny-unminimize"
         },
         {
+          "description": "Enables the show_snap_overlay command without any pre-configured scope.",
+          "type": "string",
+          "const": "decorum:allow-show-snap-overlay"
+        },
+        {
+          "description": "Denies the show_snap_overlay command without any pre-configured scope.",
+          "type": "string",
+          "const": "decorum:deny-show-snap-overlay"
+        },
+        {
+          "description": "Default permissions",
+          "type": "string",
+          "const": "devtools-app:default"
+        },
+        {
+          "description": "Enables the set_display_mode command without any pre-configured scope.",
+          "type": "string",
+          "const": "devtools-app:allow-set-display-mode"
+        },
+        {
+          "description": "Enables the show_context_menu command without any pre-configured scope.",
+          "type": "string",
+          "const": "devtools-app:allow-show-context-menu"
+        },
+        {
+          "description": "Enables the toggle command without any pre-configured scope.",
+          "type": "string",
+          "const": "devtools-app:allow-toggle"
+        },
+        {
+          "description": "Denies the set_display_mode command without any pre-configured scope.",
+          "type": "string",
+          "const": "devtools-app:deny-set-display-mode"
+        },
+        {
+          "description": "Denies the show_context_menu command without any pre-configured scope.",
+          "type": "string",
+          "const": "devtools-app:deny-show-context-menu"
+        },
+        {
+          "description": "Denies the toggle command without any pre-configured scope.",
+          "type": "string",
+          "const": "devtools-app:deny-toggle"
+        },
+        {
           "description": "This permission set configures the types of dialogs\navailable from the dialog plugin.\n\n#### Granted Permissions\n\nAll dialog types are enabled.\n\n\n",
           "type": "string",
           "const": "dialog:default"
