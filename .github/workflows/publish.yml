@@ -5,42 +5,59 @@ on:
     branches:
       - release
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  publish-tauri:
-    permissions:
-      contents: write
+  build-binaries:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - platform: 'windows-latest'
-            args: ''
+        platform: [windows-latest]
 
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v2
 
       - name: setup node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v1
         with:
-          node-version: lts/*
+          node-version: 20
 
       - name: install Rust stable
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
-          override: true
 
-      - name: install frontend dependencies
-        run: npm install
-
-      - uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: JonasKruckenberg/tauri-build@v1
+        id: tauri_build
         with:
-          tagName: stardelta-v__VERSION__ # the action automatically replaces __VERSION__ with the app version.
-          releaseName: 'StarDelta v__VERSION__'
-          releaseBody: 'See the assets to download this version and install.'
-          releaseDraft: true
-          prerelease: false
-          args: ${{ matrix.args }}
+          projectPath: ./src-tauri
+          configPath: ./src-tauri/tauri.conf.json
+
+      # The `artifacts` output can now be used by a different action to upload the artifacts
+      - uses: actions/upload-artifact@v3
+        with:
+          name: artifacts
+          path: "${{ join(fromJSON(steps.tauri_build.outputs.artifacts), '\n') }}"
+
+  publish:
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      # Download the previously uploaded artifacts
+      - uses: actions/download-artifact@v3
+        id: download
+        with:
+          name: artifacts
+          path: artifacts
+      # And create a release with the artifacts attached
+      - name: 'create release'
+        uses: softprops/action-gh-release@master
+        env:
+          GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+        with:
+          draft: false
+          files: ./artifacts/**/*
