@@ -18,7 +18,7 @@ export const App = () => {
       <footer className="absolute bottom-0 z-10 w-full p-10 text-center text-sm text-neutral-400 font-sg">
         <p className="flex items-center justify-center">
           Source on
-          <a href="github.com" className="ml-1 flex items-center">
+          <a href="https://github.com/hierocles/stardelta" className="ml-1 flex items-center">
             <span className="i-simple-icons-github mr-1"></span>
             GitHub
           </a>
