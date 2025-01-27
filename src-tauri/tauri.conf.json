@@ -30,9 +30,7 @@
         "resizable": true,
         "width": 600,
         "height": 750,
-        "center": true,
-        "closable": true,
-        "decorations": true
+        "center": true
       }
     ]
   }
