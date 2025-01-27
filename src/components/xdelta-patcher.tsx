@@ -182,7 +182,12 @@ export default function XDeltaPatcher() {
                   </Button>
                 </div>
               </div>
-              <Button onClick={handleApplyPatch}>Apply Patch</Button>
+              <Button
+                onClick={handleApplyPatch}
+                disabled={!applyPatchInputs.fileToPatchPath || !applyPatchInputs.patchFilePath || !applyPatchInputs.outputDir}
+              >
+                Apply Patch
+              </Button>
             </div>
           </TabsContent>
           <TabsContent value="create">
@@ -232,7 +237,12 @@ export default function XDeltaPatcher() {
                   </Button>
                 </div>
               </div>
-              <Button onClick={handleCreatePatch}>Create Patch</Button>
+              <Button
+                onClick={handleCreatePatch}
+                disabled={!createPatchInputs.originalFilePath || !createPatchInputs.editedFilePath || !createPatchInputs.outputDir}
+              >
+                Create Patch
+              </Button>
             </div>
           </TabsContent>
         </Tabs>
