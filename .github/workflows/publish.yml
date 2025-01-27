@@ -46,6 +46,9 @@ jobs:
           path: "${{ join(fromJSON(steps.tauri_build.outputs.artifacts), '\n') }}"
 
   publish:
+    permissions:
+      contents: write
+
     needs: build-binaries
     runs-on: ubuntu-latest
     steps:
