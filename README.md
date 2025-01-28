@@ -1,4 +1,5 @@
-# StarDelta
+![StarDelta Logo](assets/StarDelta%20Logo.svg)
+
 
 StarDelta is an xdelta3 patcher for Starfield UIs. It allows you to create and apply patches to files using the xdelta3 algorithm.
 
@@ -39,6 +40,10 @@ StarDelta is an xdelta3 patcher for Starfield UIs. It allows you to create and a
 
 2. The built application will be available in the `src-tauri/target/release` directory.
 
+### Platform Support
+
+Official releases are built for Windows only. However, as a Tauri-based app, you can build custom releases for MacOS and Linux.
+
 ## Running in Development
 
 1. Start the Tauri development server:
@@ -66,10 +71,6 @@ StarDelta is an xdelta3 patcher for Starfield UIs. It allows you to create and a
    - Click "Browse" to select the patch file.
    - Click "Browse" to select the output directory.
    - Click "Apply Patch" to apply the patch.
-
-## Logging
-
-The application uses the `tauri_plugin_log` plugin for logging and error tracing. Logs are available in the webview console.
 
 ## Contributing
 
