@@ -51,4 +51,4 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v4
         with:
           commit_message: "chore: Update FFDec to ${{ steps.ffdec_release.outputs.release }}"
-          file_pattern: 'src-tauri/lib/ffdec.jar'
+          file_pattern: 'src-tauri/src/lib/ffdec.jar'

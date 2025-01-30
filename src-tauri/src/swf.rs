@@ -7,7 +7,7 @@ pub fn convert_swf_to_xml(swf_path: String, xml_path: String) -> Result<(), Stri
 
     let output = Command::new("java")
         .arg("-jar")
-        .arg("ffdec.jar")
+        .arg("./lib/ffdec.jar")
         .arg("swf2xml")
         .arg(&swf_path)
         .arg(&xml_path)
