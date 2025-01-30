@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod swf;
+
 use tauri::command;
 use std::fs;
 use std::path::PathBuf;
@@ -84,7 +86,11 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_devtools::init()).plugin(tauri_plugin_devtools_app::init());
 
     builder
-        .invoke_handler(tauri::generate_handler![create_patch, apply_patch])
+        .invoke_handler(tauri::generate_handler![
+            create_patch,
+            apply_patch,
+            swf::convert_swf_to_xml
+        ])
         .plugin(tauri_plugin_decorum::init())
         .setup(|app| {
             let main_window = app.get_webview_window("main").unwrap();
