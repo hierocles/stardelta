@@ -18,6 +18,7 @@ jobs:
         with:
           repository: jindrapetrik/jpexs-decompiler
           token: ${{ github.token }}
+          excludes: "prerelease, draft"
 
       - name: Check current version
         id: check_version
