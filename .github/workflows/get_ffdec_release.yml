@@ -22,13 +22,13 @@ jobs:
       - name: Check current version
         id: check_version
         run: |
-          mkdir -p src-tauri/lib
-          if [ -f src-tauri/lib/ffdec.jar ]; then
-            CURRENT_VERSION=$(unzip -p src-tauri/lib/ffdec.jar project.properties | grep version= | cut -d'=' -f2)
-            echo "current_version=version${CURRENT_VERSION}" >> $GITHUB_OUTPUT
-          else
-            echo "current_version=none" >> $GITHUB_OUTPUT
-          fi
+            mkdir -p src-tauri/lib
+            if [ -f src-tauri/lib/ffdec.jar ]; then
+                CURRENT_VERSION=$(unzip -p src-tauri/lib/ffdec.jar project.properties | grep "^version=" | cut -d'=' -f2 | tr -d '[:space:]')
+                echo "current_version=version${CURRENT_VERSION}" >> $GITHUB_OUTPUT
+            else
+                echo "current_version=none" >> $GITHUB_OUTPUT
+            fi
 
       - name: Download and Extract FFDec
         if: steps.check_version.outputs.current_version != steps.ffdec_release.outputs.release
