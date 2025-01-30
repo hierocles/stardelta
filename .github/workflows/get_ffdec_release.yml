@@ -34,9 +34,13 @@ jobs:
         if: steps.check_version.outputs.current_version != steps.ffdec_release.outputs.release
         run: |
           mkdir -p temp
+          echo "Release version: ${{ steps.ffdec_release.outputs.release }}"
           VERSION_NUM="${{ steps.ffdec_release.outputs.release }}"
           VERSION_NUM="${VERSION_NUM#version}"
-          wget -O temp/ffdec.zip https://github.com/jindrapetrik/jpexs-decompiler/releases/download/${{ steps.ffdec_release.outputs.release }}/ffdec_${VERSION_NUM}.zip
+          echo "Stripped version: ${VERSION_NUM}"
+          DOWNLOAD_URL="https://github.com/jindrapetrik/jpexs-decompiler/releases/download/${{ steps.ffdec_release.outputs.release }}/ffdec_${VERSION_NUM}.zip"
+          echo "Download URL: ${DOWNLOAD_URL}"
+          wget -O temp/ffdec.zip "${DOWNLOAD_URL}"
           unzip temp/ffdec.zip -d temp/
           mv temp/ffdec.jar src-tauri/lib/
           rm -rf temp
