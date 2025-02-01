@@ -1,20 +1,27 @@
-import XDeltaPatcher from "@/components/xdelta-patcher"
+import { Routes, Route } from "react-router"
 import { ThemeProvider } from "@/components/theme-provider"
+import XDeltaPatcher from "@/components/xdelta-patcher"
+import YamlPatcher from "@/components/yaml-patcher"
+import Home from "@/components/home"
+import Header from "@/components/header"
 import "@/App.css"
 
-export const App = () => {
+export default function App() {
   return (
     <ThemeProvider defaultTheme="dark">
       <div className="absolute inset-0">
         <div className="absolute top-0 z-0 h-screen w-screen bg-neutral-950 bg-custom-gradient"></div>
       </div>
-      <main className="relative z-10 flex min-h-screen flex-col items-center justify-center gap-6 p-6 md:p-10">
-        <h1 className="text-4xl font-bold font-sg flex items-center">
-          <span className="i-arcticons-starfield mr-2"></span>
-          StarDelta Patcher
-        </h1>
-        <XDeltaPatcher />
-      </main>
+      <div className="relative z-10 min-h-screen">
+        <main className="flex min-h-screen flex-col items-center justify-center">
+          <Header />
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/binary" element={<XDeltaPatcher />} />
+            <Route path="/yaml" element={<YamlPatcher />} />
+          </Routes>
+        </main>
+      </div>
     </ThemeProvider>
-  );
-};
+  )
+}

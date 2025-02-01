@@ -9,6 +9,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Label } from "@/components/ui/label"
 import { open } from '@tauri-apps/plugin-dialog'
 import { invoke } from "@tauri-apps/api/core"
+import { NavLink } from "react-router"
 
 export default function XDeltaPatcher() {
   const [createPatchInputs, setCreatePatchInputs] = useState({
@@ -56,7 +57,7 @@ export default function XDeltaPatcher() {
   const handleApplyPatch = async () => {
     try {
       const { fileToPatchPath, patchFilePath, outputDir } = applyPatchInputs
-      console.log(`Applying patch with fileToPatchPath: ${fileToPatchPath}, patchFilePath: ${patchFilePath}, outputDir: ${outputDir}`)
+      console.log(`Applying patch with fileToPatchPath: ${fileToPatchPath}`)
 
       if (!fileToPatchPath || !patchFilePath) {
         setResult({ success: false, message: "Please select both the file to patch and the patch file." })
@@ -115,133 +116,141 @@ export default function XDeltaPatcher() {
   };
 
   return (
-    <Card className="flex w-full max-w-sm flex-col gap-6 p-6">
-      <CardContent>
-        <Tabs defaultValue="apply">
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="apply">Apply Patch</TabsTrigger>
-            <TabsTrigger value="create">Create Patch</TabsTrigger>
-          </TabsList>
-          <TabsContent value="apply">
-            <div className="space-y-4 mt-4">
-              <div className="space-y-2">
-                <Label htmlFor="fileToPatch">File to Patch</Label>
-                <div className="flex items-center space-x-2">
-                  <Input
-                    id="fileToPatch"
-                    type="text"
-                    readOnly
-                    value={applyPatchInputs.fileToPatchPath}
-                    placeholder="Select file to patch"
-                  />
-                  <Button type="button" variant="secondary" onClick={() => handleFileSelect("fileToPatch")}>
-                    Browse
-                  </Button>
+    <div className="flex flex-col items-center gap-4">
+      <NavLink
+        to="/"
+        className="self-start rounded-lg border px-4 py-2 text-sm hover:bg-accent"
+      >
+        ← Back
+      </NavLink>
+      <Card className="flex w-full max-w-sm flex-col gap-6 p-6">
+        <CardContent>
+          <Tabs defaultValue="apply">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="apply">Apply Patch</TabsTrigger>
+              <TabsTrigger value="create">Create Patch</TabsTrigger>
+            </TabsList>
+            <TabsContent value="apply">
+              <div className="space-y-4 mt-4">
+                <div className="space-y-2">
+                  <Label htmlFor="fileToPatch">File to Patch</Label>
+                  <div className="flex items-center space-x-2">
+                    <Input
+                      id="fileToPatch"
+                      type="text"
+                      readOnly
+                      value={applyPatchInputs.fileToPatchPath}
+                      placeholder="Select file to patch"
+                    />
+                    <Button type="button" variant="secondary" onClick={() => handleFileSelect("fileToPatch")}>
+                      Browse
+                    </Button>
+                  </div>
                 </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="patchFile">Patch File</Label>
-                <div className="flex items-center space-x-2">
-                  <Input
-                    id="patchFile"
-                    type="text"
-                    readOnly
-                    value={applyPatchInputs.patchFilePath}
-                    placeholder="Select patch file"
-                  />
-                  <Button type="button" variant="secondary" onClick={() => handleFileSelect("patchFile")}>
-                    Browse
-                  </Button>
+                <div className="space-y-2">
+                  <Label htmlFor="patchFile">Patch File</Label>
+                  <div className="flex items-center space-x-2">
+                    <Input
+                      id="patchFile"
+                      type="text"
+                      readOnly
+                      value={applyPatchInputs.patchFilePath}
+                      placeholder="Select patch file"
+                    />
+                    <Button type="button" variant="secondary" onClick={() => handleFileSelect("patchFile")}>
+                      Browse
+                    </Button>
+                  </div>
                 </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="applyOutputDir">Output Directory</Label>
-                <div className="flex items-center space-x-2">
-                  <Input
-                    id="applyOutputDir"
-                    type="text"
-                    readOnly
-                    value={applyPatchInputs.outputDir}
-                    placeholder="Select output folder"
-                  />
-                  <Button type="button" variant="secondary" onClick={() => handleFolderSelect("apply")}>
-                    Browse
-                  </Button>
+                <div className="space-y-2">
+                  <Label htmlFor="applyOutputDir">Output Directory</Label>
+                  <div className="flex items-center space-x-2">
+                    <Input
+                      id="applyOutputDir"
+                      type="text"
+                      readOnly
+                      value={applyPatchInputs.outputDir}
+                      placeholder="Select output folder"
+                    />
+                    <Button type="button" variant="secondary" onClick={() => handleFolderSelect("apply")}>
+                      Browse
+                    </Button>
+                  </div>
                 </div>
+                <Button
+                  onClick={handleApplyPatch}
+                  disabled={!applyPatchInputs.fileToPatchPath || !applyPatchInputs.patchFilePath || !applyPatchInputs.outputDir}
+                >
+                  Apply Patch
+                </Button>
               </div>
-              <Button
-                onClick={handleApplyPatch}
-                disabled={!applyPatchInputs.fileToPatchPath || !applyPatchInputs.patchFilePath || !applyPatchInputs.outputDir}
-              >
-                Apply Patch
-              </Button>
-            </div>
-          </TabsContent>
-          <TabsContent value="create">
-            <div className="space-y-4 mt-4">
-              <div className="space-y-2">
-                <Label htmlFor="originalFile">Original File</Label>
-                <div className="flex items-center space-x-2">
-                  <Input
-                    id="originalFile"
-                    type="text"
-                    readOnly
-                    value={createPatchInputs.originalFilePath}
-                    placeholder="Select original file"
-                  />
-                  <Button type="button" variant="secondary" onClick={() => handleFileSelect("original")}>
-                    Browse
-                  </Button>
+            </TabsContent>
+            <TabsContent value="create">
+              <div className="space-y-4 mt-4">
+                <div className="space-y-2">
+                  <Label htmlFor="originalFile">Original File</Label>
+                  <div className="flex items-center space-x-2">
+                    <Input
+                      id="originalFile"
+                      type="text"
+                      readOnly
+                      value={createPatchInputs.originalFilePath}
+                      placeholder="Select original file"
+                    />
+                    <Button type="button" variant="secondary" onClick={() => handleFileSelect("original")}>
+                      Browse
+                    </Button>
+                  </div>
                 </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="editedFile">Edited File</Label>
-                <div className="flex items-center space-x-2">
-                  <Input
-                    id="editedFile"
-                    type="text"
-                    readOnly
-                    value={createPatchInputs.editedFilePath}
-                    placeholder="Select edited file"
-                  />
-                  <Button type="button" variant="secondary" onClick={() => handleFileSelect("edited")}>
-                    Browse
-                  </Button>
+                <div className="space-y-2">
+                  <Label htmlFor="editedFile">Edited File</Label>
+                  <div className="flex items-center space-x-2">
+                    <Input
+                      id="editedFile"
+                      type="text"
+                      readOnly
+                      value={createPatchInputs.editedFilePath}
+                      placeholder="Select edited file"
+                    />
+                    <Button type="button" variant="secondary" onClick={() => handleFileSelect("edited")}>
+                      Browse
+                    </Button>
+                  </div>
                 </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="createOutputDir">Output Directory</Label>
-                <div className="flex items-center space-x-2">
-                  <Input
-                    id="createOutputDir"
-                    type="text"
-                    readOnly
-                    value={createPatchInputs.outputDir}
-                    placeholder="Select output folder"
-                  />
-                  <Button type="button" variant="secondary" onClick={() => handleFolderSelect("create")}>
-                    Browse
-                  </Button>
+                <div className="space-y-2">
+                  <Label htmlFor="createOutputDir">Output Directory</Label>
+                  <div className="flex items-center space-x-2">
+                    <Input
+                      id="createOutputDir"
+                      type="text"
+                      readOnly
+                      value={createPatchInputs.outputDir}
+                      placeholder="Select output folder"
+                    />
+                    <Button type="button" variant="secondary" onClick={() => handleFolderSelect("create")}>
+                      Browse
+                    </Button>
+                  </div>
                 </div>
+                <Button
+                  onClick={handleCreatePatch}
+                  disabled={!createPatchInputs.originalFilePath || !createPatchInputs.editedFilePath || !createPatchInputs.outputDir}
+                >
+                  Create Patch
+                </Button>
               </div>
-              <Button
-                onClick={handleCreatePatch}
-                disabled={!createPatchInputs.originalFilePath || !createPatchInputs.editedFilePath || !createPatchInputs.outputDir}
-              >
-                Create Patch
-              </Button>
-            </div>
-          </TabsContent>
-        </Tabs>
-      </CardContent>
-      <CardFooter>
-        {result && (
-          <Alert variant={result.success ? "default" : "destructive"}>
-            <AlertTitle>{result.success ? "Success" : "Error"}</AlertTitle>
-            <AlertDescription>{result.message}</AlertDescription>
-          </Alert>
-        )}
-      </CardFooter>
-    </Card>
+            </TabsContent>
+          </Tabs>
+        </CardContent>
+        <CardFooter>
+          {result && (
+            <Alert variant={result.success ? "default" : "destructive"}>
+              <AlertTitle>{result.success ? "Success" : "Error"}</AlertTitle>
+              <AlertDescription>{result.message}</AlertDescription>
+            </Alert>
+          )}
+        </CardFooter>
+      </Card>
+    </div>
   )
 }
