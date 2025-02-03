@@ -28,7 +28,7 @@
   },
   "devDependencies": {
     "@egoist/tailwindcss-icons": "^1.9.0",
-    "@iconify-json/arcticons": "^1.2.17",
+    "@iconify-json/arcticons": "^1.2.18",
     "@iconify-json/simple-icons": "^1.2.21",
     "@tailwindcss/typography": "^0.5.16",
     "@tauri-apps/cli": "^2.2.7",
