@@ -1,18 +1,18 @@
+use kurbo::Point;
+use serde::Deserialize;
+use serde_json;
 use std::fs;
 use std::path::Path;
 use std::str::FromStr;
-use tauri::{command, AppHandle};
-use swf_types::{
-    Movie, Tag, Shape, ShapeStyles, FillStyle, StraightSRgba8, Rect, ShapeRecord, shape_records,
-    LineStyle, CapStyle, JoinStyle, fill_styles, SRgb8,
-};
-use swf_parser::parse_swf;
+use svgtypes::{Color, PathParser, PathSegment, Transform};
 use swf_emitter::emit_swf;
-use serde::Deserialize;
-use serde_json;
-use svgtypes::{PathParser, PathSegment, Color, Transform};
-use xmlparser::{Tokenizer, Token};
-use kurbo::Point;
+use swf_parser::parse_swf;
+use swf_types::{
+    fill_styles, shape_records, CapStyle, FillStyle, JoinStyle, LineStyle, Movie, Rect, SRgb8,
+    Shape, ShapeRecord, ShapeStyles, StraightSRgba8, Tag,
+};
+use tauri::{command, AppHandle};
+use xmlparser::{Token, Tokenizer};
 
 #[derive(Debug, Deserialize)]
 struct ModificationConfig {
@@ -52,7 +52,11 @@ struct TagModification {
 }
 
 #[command]
-pub fn convert_swf_to_json(_handle: AppHandle, swf_path: String, json_path: String) -> Result<(), String> {
+pub fn convert_swf_to_json(
+    _handle: AppHandle,
+    swf_path: String,
+    json_path: String,
+) -> Result<(), String> {
     log::trace!("Converting SWF to JSON: {} -> {}", swf_path, json_path);
 
     // Read SWF file
@@ -62,7 +66,8 @@ pub fn convert_swf_to_json(_handle: AppHandle, swf_path: String, json_path: Stri
     let movie = parse_swf(&swf_data).map_err(|e| format!("Failed to parse SWF: {}", e))?;
 
     // Serialize to JSON
-    let json = serde_json::to_string_pretty(&movie).map_err(|e| format!("Failed to convert to JSON: {}", e))?;
+    let json = serde_json::to_string_pretty(&movie)
+        .map_err(|e| format!("Failed to convert to JSON: {}", e))?;
 
     // Write JSON file
     fs::write(&json_path, json).map_err(|e| format!("Failed to write JSON file: {}", e))?;
@@ -71,14 +76,24 @@ pub fn convert_swf_to_json(_handle: AppHandle, swf_path: String, json_path: Stri
 }
 
 #[command]
-pub fn apply_json_modifications(_handle: AppHandle, swf_json_path: String, config_json_path: String, output_json_path: String) -> Result<(), String> {
-    log::trace!("Applying JSON modifications: {} + {} -> {}", swf_json_path, config_json_path, output_json_path);
+pub fn apply_json_modifications(
+    _handle: AppHandle,
+    swf_json_path: String,
+    config_json_path: String,
+    output_json_path: String,
+) -> Result<(), String> {
+    log::trace!(
+        "Applying JSON modifications: {} + {} -> {}",
+        swf_json_path,
+        config_json_path,
+        output_json_path
+    );
 
     // Read SWF JSON
     let swf_json = fs::read_to_string(&swf_json_path)
         .map_err(|e| format!("Failed to read SWF JSON: {}", e))?;
-    let mut movie: Movie = serde_json::from_str(&swf_json)
-        .map_err(|e| format!("Failed to parse SWF JSON: {}", e))?;
+    let mut movie: Movie =
+        serde_json::from_str(&swf_json).map_err(|e| format!("Failed to parse SWF JSON: {}", e))?;
 
     // Read config JSON
     let config_json = fs::read_to_string(&config_json_path)
@@ -138,8 +153,7 @@ fn apply_transform(point: Point, transform: &Transform) -> Point {
 }
 
 fn parse_shape_source(path: &Path) -> Result<Vec<Shape>, String> {
-    let svg_data = fs::read(path)
-        .map_err(|e| format!("Failed to read SVG file: {}", e))?;
+    let svg_data = fs::read(path).map_err(|e| format!("Failed to read SVG file: {}", e))?;
 
     let mut shapes = Vec::new();
     let mut current_shape = Shape {
@@ -191,7 +205,7 @@ fn parse_shape_source(path: &Path) -> Result<Vec<Shape>, String> {
                             "none" => None,
                             color_str => Color::from_str(color_str)
                                 .map_err(|e| format!("Failed to parse fill color: {}", e))
-                                .ok()
+                                .ok(),
                         };
                     }
                     "stroke" => {
@@ -199,7 +213,7 @@ fn parse_shape_source(path: &Path) -> Result<Vec<Shape>, String> {
                             "none" => None,
                             color_str => Color::from_str(color_str)
                                 .map_err(|e| format!("Failed to parse stroke color: {}", e))
-                                .ok()
+                                .ok(),
                         };
                     }
                     "stroke-width" => {
@@ -230,7 +244,8 @@ fn parse_shape_source(path: &Path) -> Result<Vec<Shape>, String> {
                     let path_parser = PathParser::from(path_str.as_str());
 
                     for segment in path_parser {
-                        let segment = segment.map_err(|e| format!("Failed to parse path: {}", e))?;
+                        let segment =
+                            segment.map_err(|e| format!("Failed to parse path: {}", e))?;
                         match segment {
                             PathSegment::MoveTo { abs, x, y } => {
                                 let point = if abs {
@@ -239,19 +254,22 @@ fn parse_shape_source(path: &Path) -> Result<Vec<Shape>, String> {
                                     Point::new(current_pos.x + x as f64, current_pos.y + y as f64)
                                 };
                                 // Apply transform if present
-                                let transformed_point = transform.as_ref()
+                                let transformed_point = transform
+                                    .as_ref()
                                     .map(|t| apply_transform(point, t))
                                     .unwrap_or(point);
-                                current_shape.records.push(ShapeRecord::StyleChange(shape_records::StyleChange {
-                                    move_to: Some(swf_types::Vector2D {
-                                        x: transformed_point.x as i32,
-                                        y: transformed_point.y as i32,
-                                    }),
-                                    left_fill: Some(1),
-                                    right_fill: None,
-                                    line_style: Some(1),
-                                    new_styles: None,
-                                }));
+                                current_shape.records.push(ShapeRecord::StyleChange(
+                                    shape_records::StyleChange {
+                                        move_to: Some(swf_types::Vector2D {
+                                            x: transformed_point.x as i32,
+                                            y: transformed_point.y as i32,
+                                        }),
+                                        left_fill: Some(1),
+                                        right_fill: None,
+                                        line_style: Some(1),
+                                        new_styles: None,
+                                    },
+                                ));
                                 current_pos = transformed_point;
                             }
                             PathSegment::LineTo { abs, x, y } => {
@@ -261,23 +279,34 @@ fn parse_shape_source(path: &Path) -> Result<Vec<Shape>, String> {
                                     Point::new(current_pos.x + x as f64, current_pos.y + y as f64)
                                 };
                                 // Apply transform if present
-                                let transformed_point = transform.as_ref()
+                                let transformed_point = transform
+                                    .as_ref()
                                     .map(|t| apply_transform(point, t))
                                     .unwrap_or(point);
-                                current_shape.records.push(ShapeRecord::Edge(shape_records::Edge {
-                                    delta: point_to_vec2d(current_pos, transformed_point),
-                                    control_delta: None,
-                                }));
+                                current_shape.records.push(ShapeRecord::Edge(
+                                    shape_records::Edge {
+                                        delta: point_to_vec2d(current_pos, transformed_point),
+                                        control_delta: None,
+                                    },
+                                ));
                                 current_pos = transformed_point;
                             }
-                            PathSegment::CurveTo { abs, x1, y1, x2, y2, x, y } => {
+                            PathSegment::CurveTo {
+                                abs,
+                                x1,
+                                y1,
+                                x2,
+                                y2,
+                                x,
+                                y,
+                            } => {
                                 // Convert cubic bezier to quadratic by approximating control point
                                 let control = if abs {
                                     Point::new(((x1 + x2) / 2.0) as f64, ((y1 + y2) / 2.0) as f64)
                                 } else {
                                     Point::new(
                                         current_pos.x + ((x1 + x2) / 2.0) as f64,
-                                        current_pos.y + ((y1 + y2) / 2.0) as f64
+                                        current_pos.y + ((y1 + y2) / 2.0) as f64,
                                     )
                                 };
                                 let end = if abs {
@@ -286,16 +315,23 @@ fn parse_shape_source(path: &Path) -> Result<Vec<Shape>, String> {
                                     Point::new(current_pos.x + x as f64, current_pos.y + y as f64)
                                 };
                                 // Apply transform if present
-                                let transformed_control = transform.as_ref()
+                                let transformed_control = transform
+                                    .as_ref()
                                     .map(|t| apply_transform(control, t))
                                     .unwrap_or(control);
-                                let transformed_end = transform.as_ref()
+                                let transformed_end = transform
+                                    .as_ref()
                                     .map(|t| apply_transform(end, t))
                                     .unwrap_or(end);
-                                current_shape.records.push(ShapeRecord::Edge(shape_records::Edge {
-                                    delta: point_to_vec2d(current_pos, transformed_end),
-                                    control_delta: Some(point_to_vec2d(current_pos, transformed_control)),
-                                }));
+                                current_shape.records.push(ShapeRecord::Edge(
+                                    shape_records::Edge {
+                                        delta: point_to_vec2d(current_pos, transformed_end),
+                                        control_delta: Some(point_to_vec2d(
+                                            current_pos,
+                                            transformed_control,
+                                        )),
+                                    },
+                                ));
                                 current_pos = transformed_end;
                             }
                             PathSegment::ClosePath { .. } => {
@@ -304,18 +340,22 @@ fn parse_shape_source(path: &Path) -> Result<Vec<Shape>, String> {
                                 for record in &current_shape.records {
                                     if let ShapeRecord::StyleChange(change) = record {
                                         if let Some(pos) = &change.move_to {
-                                            first_point = Some(Point::new(pos.x as f64, pos.y as f64));
+                                            first_point =
+                                                Some(Point::new(pos.x as f64, pos.y as f64));
                                             break;
                                         }
                                     }
                                 }
                                 if let Some(start_pos) = first_point {
-                                    if (current_pos.x - start_pos.x).abs() > 1.0 ||
-                                       (current_pos.y - start_pos.y).abs() > 1.0 {
-                                        current_shape.records.push(ShapeRecord::Edge(shape_records::Edge {
-                                            delta: point_to_vec2d(current_pos, start_pos),
-                                            control_delta: None,
-                                        }));
+                                    if (current_pos.x - start_pos.x).abs() > 1.0
+                                        || (current_pos.y - start_pos.y).abs() > 1.0
+                                    {
+                                        current_shape.records.push(ShapeRecord::Edge(
+                                            shape_records::Edge {
+                                                delta: point_to_vec2d(current_pos, start_pos),
+                                                control_delta: None,
+                                            },
+                                        ));
                                     }
                                 }
                             }
@@ -325,14 +365,16 @@ fn parse_shape_source(path: &Path) -> Result<Vec<Shape>, String> {
 
                     // Add styles
                     if let Some(color) = fill_color {
-                        current_shape.initial_styles.fill.push(FillStyle::Solid(fill_styles::Solid {
-                            color: StraightSRgba8 {
-                                r: color.red,
-                                g: color.green,
-                                b: color.blue,
-                                a: opacity_to_alpha(fill_opacity),
+                        current_shape.initial_styles.fill.push(FillStyle::Solid(
+                            fill_styles::Solid {
+                                color: StraightSRgba8 {
+                                    r: color.red,
+                                    g: color.green,
+                                    b: color.blue,
+                                    a: opacity_to_alpha(fill_opacity),
+                                },
                             },
-                        }));
+                        ));
                     }
 
                     if let Some(color) = stroke_color {
@@ -373,7 +415,11 @@ fn parse_shape_source(path: &Path) -> Result<Vec<Shape>, String> {
     Ok(shapes)
 }
 
-fn replace_shape_in_movie(movie: &mut Movie, shape_id: u16, new_shapes: &[Shape]) -> Result<(), String> {
+fn replace_shape_in_movie(
+    movie: &mut Movie,
+    shape_id: u16,
+    new_shapes: &[Shape],
+) -> Result<(), String> {
     // Find the shape tag with matching ID
     for tag in &mut movie.tags {
         if let Tag::DefineShape(tag) = tag {
@@ -481,26 +527,30 @@ fn apply_tag_modification(movie: &mut Movie, modification: &TagModification) -> 
                     tag.data = serde_json::from_value(data.clone())
                         .map_err(|e| format!("Failed to parse binary data: {}", e))?;
                 }
-            },
+            }
             (Tag::DefineBitmap(tag), "DefineBitmapTag") if tag.id == modification.id => {
                 if let Some(data) = modification.properties.get("data") {
                     tag.data = serde_json::from_value(data.clone())
                         .map_err(|e| format!("Failed to parse bitmap data: {}", e))?;
                 }
-            },
+            }
             (Tag::DefineButton(tag), "DefineButtonTag") if tag.id == modification.id => {
                 if let Some(records) = modification.properties.get("records") {
                     tag.records = serde_json::from_value(records.clone())
                         .map_err(|e| format!("Failed to parse button records: {}", e))?;
                 }
-            },
-            (Tag::DefineButtonColorTransform(tag), "DefineButtonColorTransformTag") if tag.button_id == modification.id => {
+            }
+            (Tag::DefineButtonColorTransform(tag), "DefineButtonColorTransformTag")
+                if tag.button_id == modification.id =>
+            {
                 if let Some(transform) = modification.properties.get("transform") {
                     tag.transform = serde_json::from_value(transform.clone())
                         .map_err(|e| format!("Failed to parse color transform: {}", e))?;
                 }
-            },
-            (Tag::DefineButtonSound(tag), "DefineButtonSoundTag") if tag.button_id == modification.id => {
+            }
+            (Tag::DefineButtonSound(tag), "DefineButtonSoundTag")
+                if tag.button_id == modification.id =>
+            {
                 if let Some(over_up_to_idle) = modification.properties.get("overUpToIdle") {
                     tag.over_up_to_idle = serde_json::from_value(over_up_to_idle.clone())
                         .map_err(|e| format!("Failed to parse over_up_to_idle sound: {}", e))?;
@@ -509,33 +559,39 @@ fn apply_tag_modification(movie: &mut Movie, modification: &TagModification) -> 
                     tag.idle_to_over_up = serde_json::from_value(idle_to_over_up.clone())
                         .map_err(|e| format!("Failed to parse idle_to_over_up sound: {}", e))?;
                 }
-                if let Some(over_up_to_over_down) = modification.properties.get("overUpToOverDown") {
+                if let Some(over_up_to_over_down) = modification.properties.get("overUpToOverDown")
+                {
                     tag.over_up_to_over_down = serde_json::from_value(over_up_to_over_down.clone())
-                        .map_err(|e| format!("Failed to parse over_up_to_over_down sound: {}", e))?;
+                        .map_err(|e| {
+                            format!("Failed to parse over_up_to_over_down sound: {}", e)
+                        })?;
                 }
-                if let Some(over_down_to_over_up) = modification.properties.get("overDownToOverUp") {
+                if let Some(over_down_to_over_up) = modification.properties.get("overDownToOverUp")
+                {
                     tag.over_down_to_over_up = serde_json::from_value(over_down_to_over_up.clone())
-                        .map_err(|e| format!("Failed to parse over_down_to_over_up sound: {}", e))?;
+                        .map_err(|e| {
+                            format!("Failed to parse over_down_to_over_up sound: {}", e)
+                        })?;
                 }
-            },
+            }
             (Tag::DefineDynamicText(tag), "DefineDynamicTextTag") if tag.id == modification.id => {
                 if let Some(text) = modification.properties.get("text") {
                     tag.text = serde_json::from_value(text.clone())
                         .map_err(|e| format!("Failed to parse dynamic text: {}", e))?;
                 }
-            },
+            }
             (Tag::DefineFont(tag), "DefineFontTag") if tag.id == modification.id => {
                 if let Some(glyphs) = modification.properties.get("glyphs") {
                     tag.glyphs = serde_json::from_value(glyphs.clone())
                         .map_err(|e| format!("Failed to parse font glyphs: {}", e))?;
                 }
-            },
+            }
             (Tag::DefineMorphShape(tag), "DefineMorphShapeTag") if tag.id == modification.id => {
                 if let Some(shape) = modification.properties.get("shape") {
                     tag.shape = serde_json::from_value(shape.clone())
                         .map_err(|e| format!("Failed to parse morph shape: {}", e))?;
                 }
-            },
+            }
             (Tag::DefineShape(tag), "DefineShapeTag") if tag.id == modification.id => {
                 // Handle complete shape replacement
                 if let Some(shape) = modification.properties.get("shape") {
@@ -557,28 +613,30 @@ fn apply_tag_modification(movie: &mut Movie, modification: &TagModification) -> 
                     } else {
                         // Handle fill and line styles separately
                         if let Some(fill_styles) = modification.properties.get("fillStyles") {
-                            tag.shape.initial_styles.fill = serde_json::from_value(fill_styles.clone())
-                                .map_err(|e| format!("Failed to parse fill styles: {}", e))?;
+                            tag.shape.initial_styles.fill =
+                                serde_json::from_value(fill_styles.clone())
+                                    .map_err(|e| format!("Failed to parse fill styles: {}", e))?;
                         }
                         if let Some(line_styles) = modification.properties.get("lineStyles") {
-                            tag.shape.initial_styles.line = serde_json::from_value(line_styles.clone())
-                                .map_err(|e| format!("Failed to parse line styles: {}", e))?;
+                            tag.shape.initial_styles.line =
+                                serde_json::from_value(line_styles.clone())
+                                    .map_err(|e| format!("Failed to parse line styles: {}", e))?;
                         }
                     }
                 }
-            },
+            }
             (Tag::DefineSprite(tag), "DefineSpriteTag") if tag.id == modification.id => {
                 if let Some(tags) = modification.properties.get("tags") {
                     tag.tags = serde_json::from_value(tags.clone())
                         .map_err(|e| format!("Failed to parse sprite tags: {}", e))?;
                 }
-            },
+            }
             (Tag::DefineText(tag), "DefineTextTag") if tag.id == modification.id => {
                 if let Some(records) = modification.properties.get("records") {
                     tag.records = serde_json::from_value(records.clone())
                         .map_err(|e| format!("Failed to parse text records: {}", e))?;
                 }
-            },
+            }
 
             // Control tags
             (Tag::DoAbc(tag), "DoAbcTag") => {
@@ -586,13 +644,13 @@ fn apply_tag_modification(movie: &mut Movie, modification: &TagModification) -> 
                     tag.data = serde_json::from_value(data.clone())
                         .map_err(|e| format!("Failed to parse ABC data: {}", e))?;
                 }
-            },
+            }
             (Tag::DoAction(tag), "DoActionTag") => {
                 if let Some(actions) = modification.properties.get("actions") {
                     tag.actions = serde_json::from_value(actions.clone())
                         .map_err(|e| format!("Failed to parse actions: {}", e))?;
                 }
-            },
+            }
             (Tag::FileAttributes(tag), "FileAttributesTag") => {
                 if let Some(props) = modification.properties.as_object() {
                     if let Some(as3) = props.get("actionScript3") {
@@ -608,13 +666,13 @@ fn apply_tag_modification(movie: &mut Movie, modification: &TagModification) -> 
                         tag.use_direct_blit = gpu.as_bool().unwrap_or(false);
                     }
                 }
-            },
+            }
             (Tag::FrameLabel(tag), "FrameLabelTag") => {
                 if let Some(name) = modification.properties.get("name") {
                     tag.name = serde_json::from_value(name.clone())
                         .map_err(|e| format!("Failed to parse frame label: {}", e))?;
                 }
-            },
+            }
             (Tag::PlaceObject(tag), "PlaceObjectTag") => {
                 if let Some(matrix) = modification.properties.get("matrix") {
                     tag.matrix = serde_json::from_value(matrix.clone())
@@ -624,13 +682,13 @@ fn apply_tag_modification(movie: &mut Movie, modification: &TagModification) -> 
                     tag.color_transform = serde_json::from_value(color_transform.clone())
                         .map_err(|e| format!("Failed to parse color transform: {}", e))?;
                 }
-            },
+            }
             (Tag::RemoveObject(tag), "RemoveObjectTag") => {
                 if let Some(depth) = modification.properties.get("depth") {
                     tag.depth = serde_json::from_value(depth.clone())
                         .map_err(|e| format!("Failed to parse depth: {}", e))?;
                 }
-            },
+            }
             (Tag::SetBackgroundColor(tag), "SetBackgroundColorTag") => {
                 if let Some(color) = modification.properties.get("backgroundColor") {
                     let rgba: StraightSRgba8 = serde_json::from_value(color.clone())
@@ -641,19 +699,19 @@ fn apply_tag_modification(movie: &mut Movie, modification: &TagModification) -> 
                         b: rgba.b,
                     };
                 }
-            },
+            }
             (Tag::StartSound(tag), "StartSoundTag") => {
                 if let Some(sound_info) = modification.properties.get("soundInfo") {
                     tag.sound_info = serde_json::from_value(sound_info.clone())
                         .map_err(|e| format!("Failed to parse sound info: {}", e))?;
                 }
-            },
+            }
             (Tag::SymbolClass(tag), "SymbolClassTag") => {
                 if let Some(symbols) = modification.properties.get("symbols") {
                     tag.symbols = serde_json::from_value(symbols.clone())
                         .map_err(|e| format!("Failed to parse symbols: {}", e))?;
                 }
-            },
+            }
 
             // Scene and Frame Data
             (Tag::DefineSceneAndFrameLabelData(tag), "DefineSceneAndFrameLabelDataTag") => {
@@ -665,7 +723,7 @@ fn apply_tag_modification(movie: &mut Movie, modification: &TagModification) -> 
                     tag.labels = serde_json::from_value(labels.clone())
                         .map_err(|e| format!("Failed to parse labels: {}", e))?;
                 }
-            },
+            }
             _ => continue,
         }
     }
@@ -673,14 +731,20 @@ fn apply_tag_modification(movie: &mut Movie, modification: &TagModification) -> 
 }
 
 #[command]
-pub fn convert_json_to_swf(_handle: AppHandle, json_path: String, swf_path: String) -> Result<(), String> {
+pub fn convert_json_to_swf(
+    _handle: AppHandle,
+    json_path: String,
+    swf_path: String,
+) -> Result<(), String> {
     log::trace!("Converting JSON to SWF: {} -> {}", json_path, swf_path);
 
     // Read JSON file
-    let json_data = fs::read_to_string(&json_path).map_err(|e| format!("Failed to read JSON file: {}", e))?;
+    let json_data =
+        fs::read_to_string(&json_path).map_err(|e| format!("Failed to read JSON file: {}", e))?;
 
     // Parse JSON to Movie
-    let movie: Movie = serde_json::from_str(&json_data).map_err(|e| format!("Failed to parse JSON: {}", e))?;
+    let movie: Movie =
+        serde_json::from_str(&json_data).map_err(|e| format!("Failed to parse JSON: {}", e))?;
 
     // Convert Movie to binary SWF
     let swf_data = emit_swf(&movie, swf_types::CompressionMethod::None)

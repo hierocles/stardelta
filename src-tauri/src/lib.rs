@@ -2,15 +2,14 @@
 
 mod swf;
 
-use tauri::command;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use xdelta3::encode;
-use xdelta3::decode;
-use serde::{Deserialize, Serialize};
+use tauri::command;
 use tauri::Manager;
 use tauri_plugin_decorum::WebviewWindowExt;
-
+use xdelta3::decode;
+use xdelta3::encode;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CreatePatchArgs {
@@ -44,7 +43,8 @@ fn create_patch(args: CreatePatchArgs) -> Result<(), String> {
         log::error!("{}", msg);
         msg
     })?;
-    let output_path = PathBuf::from(&args.output_dir).join(format!("{}.xdelta", args.original_file_name));
+    let output_path =
+        PathBuf::from(&args.output_dir).join(format!("{}.xdelta", args.original_file_name));
     fs::write(&output_path, &patch).map_err(|e| {
         log::error!("Failed to write patch file: {}", e);
         e.to_string()
@@ -79,11 +79,12 @@ fn apply_patch(args: ApplyPatchArgs) -> Result<(), String> {
 }
 
 pub fn run() {
-
-    let builder = tauri::Builder::default();
+    let builder = tauri::Builder::default().plugin(tauri_plugin_fs::init());
 
     #[cfg(debug_assertions)]
-    let builder = builder.plugin(tauri_plugin_devtools::init()).plugin(tauri_plugin_devtools_app::init());
+    let builder = builder
+        .plugin(tauri_plugin_devtools::init())
+        .plugin(tauri_plugin_devtools_app::init());
 
     builder
         .invoke_handler(tauri::generate_handler![
