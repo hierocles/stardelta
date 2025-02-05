@@ -1,7 +1,7 @@
 import { Routes, Route } from "react-router"
 import { ThemeProvider } from "@/components/theme-provider"
 import XDeltaPatcher from "@/components/xdelta-patcher"
-import YamlPatcher from "@/components/yaml-patcher"
+import SwfPatcher from "@/components/swf-patcher"
 import Home from "@/components/home"
 import Header from "@/components/header"
 import "@/App.css"
@@ -18,10 +18,12 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/binary" element={<XDeltaPatcher />} />
-            <Route path="/yaml" element={<YamlPatcher />} />
+            <Route path="/swf" element={<SwfPatcher />} />
           </Routes>
         </main>
       </div>
+
+
     </ThemeProvider>
   )
 }

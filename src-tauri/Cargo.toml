@@ -26,6 +26,13 @@ log = "0.4"
 tauri-plugin-devtools = "2.0.0"
 tauri-plugin-devtools-app = "2.0.0"
 tauri-plugin-decorum = "1.1.1"
+swf-parser = "0.14.0"
+swf-emitter = "0.14.0"
+swf-types = "0.14.0"
+usvg = "0.35.0"
+kurbo = "0.9.1"  # For path operations
+svgtypes = "0.15.3"  # For SVG parsing
+xmlparser = "0.13.5"  # XML parsing for SVG
 
 [features]
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!

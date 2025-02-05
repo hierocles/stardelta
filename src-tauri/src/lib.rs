@@ -89,7 +89,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             create_patch,
             apply_patch,
-            swf::convert_swf_to_xml
+            swf::convert_swf_to_json,
+            swf::convert_json_to_swf,
+            swf::apply_json_modifications
         ])
         .plugin(tauri_plugin_decorum::init())
         .setup(|app| {

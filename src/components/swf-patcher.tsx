@@ -10,10 +10,10 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { invoke } from "@tauri-apps/api/core"
 import { NavLink } from "react-router"
 
-export default function YamlPatcher() {
+export default function SwfPatcher() {
   const [patchInputs, setPatchInputs] = useState({
     swfFilePath: "",
-    yamlFilePath: "",
+    jsonFilePath: "",
     outputDir: "",
   })
 
@@ -21,46 +21,58 @@ export default function YamlPatcher() {
 
   const handlePatch = async () => {
     try {
-      const { swfFilePath, yamlFilePath, outputDir } = patchInputs
-      console.log(`Patching SWF with config: ${yamlFilePath}, swfPath: ${swfFilePath}, outputDir: ${outputDir}`)
+      const { swfFilePath, jsonFilePath, outputDir } = patchInputs
+      console.log(`Patching SWF with config: ${jsonFilePath}, swfPath: ${swfFilePath}, outputDir: ${outputDir}`)
 
-      if (!swfFilePath || !yamlFilePath) {
-        setResult({ success: false, message: "Please select both SWF and YAML files." })
+      if (!swfFilePath || !jsonFilePath) {
+        setResult({ success: false, message: "Please select both SWF and JSON files." })
         return
       }
 
-      const patched = await invoke('patch_swf', {
-        args: {
-          swf_file_path: swfFilePath,
-          yaml_file_path: yamlFilePath,
-          output_dir: outputDir,
-          swf_file_name: swfFilePath.split('\\').pop()
-        }
+      // First convert SWF to JSON
+      const tempJsonPath = `${outputDir}/temp_swf.json`
+      await invoke('convert_swf_to_json', {
+        swfPath: swfFilePath,
+        jsonPath: tempJsonPath
       })
-      if (patched) {
-        setResult({ success: true, message: "SWF patched successfully!" })
-        console.info("SWF patched successfully")
-      }
+
+      // Apply modifications from JSON config
+      const modifiedJsonPath = `${outputDir}/modified_swf.json`
+      await invoke('apply_json_modifications', {
+        swfJsonPath: tempJsonPath,
+        configJsonPath: jsonFilePath,
+        outputJsonPath: modifiedJsonPath
+      })
+
+      // Convert back to SWF
+      const outputSwfPath = `${outputDir}/${swfFilePath.split('\\').pop()}`
+      await invoke('convert_json_to_swf', {
+        jsonPath: modifiedJsonPath,
+        swfPath: outputSwfPath
+      })
+
+      setResult({ success: true, message: "SWF patched successfully!" })
+      console.info("SWF patched successfully")
     } catch (err: any) {
       setResult({ success: false, message: "Failed to patch SWF: " + err })
       console.error("Failed to patch SWF: " + err)
     }
   }
 
-  const handleFileSelect = async (operation: "swf" | "yaml") => {
+  const handleFileSelect = async (operation: "swf" | "json") => {
     const selectedFile = await open({
       multiple: false,
       filters: [{
-        name: operation === "swf" ? "SWF Files" : "YAML Files",
-        extensions: [operation === "swf" ? "swf" : "yml", operation === "yaml" ? "yaml" : ""]
+        name: operation === "swf" ? "SWF Files" : "JSON Files",
+        extensions: [operation === "swf" ? "swf" : "json"]
       }]
     });
 
     if (typeof selectedFile === 'string') {
       if (operation === "swf") {
         setPatchInputs((prev) => ({ ...prev, swfFilePath: selectedFile }));
-      } else if (operation === "yaml") {
-        setPatchInputs((prev) => ({ ...prev, yamlFilePath: selectedFile }));
+      } else if (operation === "json") {
+        setPatchInputs((prev) => ({ ...prev, jsonFilePath: selectedFile }));
       }
     }
   };
@@ -103,16 +115,16 @@ export default function YamlPatcher() {
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="yamlFile">YAML Configuration</Label>
+              <Label htmlFor="jsonFile">JSON Configuration</Label>
               <div className="flex items-center space-x-2">
                 <Input
-                  id="yamlFile"
+                  id="jsonFile"
                   type="text"
                   readOnly
-                  value={patchInputs.yamlFilePath}
-                  placeholder="Select YAML file"
+                  value={patchInputs.jsonFilePath}
+                  placeholder="Select JSON file"
                 />
-                <Button type="button" variant="secondary" onClick={() => handleFileSelect("yaml")}>
+                <Button type="button" variant="secondary" onClick={() => handleFileSelect("json")}>
                   Browse
                 </Button>
               </div>
@@ -134,7 +146,7 @@ export default function YamlPatcher() {
             </div>
             <Button
               onClick={handlePatch}
-              disabled={!patchInputs.swfFilePath || !patchInputs.yamlFilePath || !patchInputs.outputDir}
+              disabled={!patchInputs.swfFilePath || !patchInputs.jsonFilePath || !patchInputs.outputDir}
             >
               Patch SWF
             </Button>

@@ -14,14 +14,15 @@ export default function Home() {
                 </span>
             </Button>
             </Link>
-            <Link to="/yaml" className="w-full">
+            <Link to="/swf" className="w-full">
             <Button className="w-full h-20 text-lg" variant="outline">
-                YAML Patch
+                SWF Patch
                 <span className="block text-sm text-muted-foreground mt-1">
-                Patch SWF files using YAML config
+                Patch SWF files using JSON config
                 </span>
             </Button>
             </Link>
+
         </CardContent>
     </Card>
   )
