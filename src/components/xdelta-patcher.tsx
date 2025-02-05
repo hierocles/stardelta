@@ -1,256 +1,318 @@
 "use client"
 
 import { useState } from "react"
-import { Card, CardContent, CardFooter } from "@/components/ui/card"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Input } from "@/components/ui/input"
-import { Button } from "@/components/ui/button"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Label } from "@/components/ui/label"
-import { open } from '@tauri-apps/plugin-dialog'
 import { invoke } from "@tauri-apps/api/core"
+import { open, save } from "@tauri-apps/plugin-dialog"
+import { stat } from "@tauri-apps/plugin-fs"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { NavLink } from "react-router"
+import { Logo } from "@/components/ui/logo"
+import { toast } from "sonner"
 
-export default function XDeltaPatcher() {
-  const [createPatchInputs, setCreatePatchInputs] = useState({
-    originalFilePath: "",
-    editedFilePath: "",
-    outputDir: "",
-  })
+const MAX_FILE_SIZE = 100 * 1024 * 1024 // 100MB
+const PATCH_EXTENSIONS = ["vcdiff", "xdelta", "xdelta3"]
 
-  const [applyPatchInputs, setApplyPatchInputs] = useState({
-    fileToPatchPath: "",
-    patchFilePath: "",
-    outputDir: "",
-  })
+export function XdeltaPatcher() {
+  // End-user states
+  const [originalPath, setOriginalPath] = useState("")
+  const [patchPath, setPatchPath] = useState("")
+  const [outputPath, setOutputPath] = useState("")
+  const [isApplyingPatch, setIsApplyingPatch] = useState(false)
+  const [isCreatingPatch, setIsCreatingPatch] = useState(false)
 
-  const [result, setResult] = useState<{ success: boolean; message: string } | null>(null)
+  // Mod author states
+  const [sourcePath, setSourcePath] = useState("")
+  const [modifiedPath, setModifiedPath] = useState("")
+  const [exportPatchPath, setExportPatchPath] = useState("")
 
-  const handleCreatePatch = async () => {
+  const handleSelectFile = async (
+    setter: (path: string) => void,
+    filters?: { name: string; extensions: string[] }[]
+  ) => {
     try {
-      const { originalFilePath, editedFilePath, outputDir } = createPatchInputs
-      console.log(`Creating patch with originalFilePath: ${originalFilePath}, editedFilePath: ${editedFilePath}, outputDir: ${outputDir}`)
-
-      if (!originalFilePath || !editedFilePath) {
-        setResult({ success: false, message: "Please select both original and edited files." })
-        return
-      }
-
-      const patch = await invoke('create_patch', {
-        args: {
-          original_file_path: originalFilePath,
-          edited_file_path: editedFilePath,
-          output_dir: outputDir,
-          original_file_name: originalFilePath.split('\\').pop()
-        }
+      const selected = await open({
+        multiple: false,
+        filters,
       })
-      if (patch) {
-        setResult({ success: true, message: "Patch created and saved successfully!" })
-        console.info("Patch created successfully")
+      if (selected && typeof selected === "string") {
+        // Check file extension if filters are provided
+        if (filters?.length) {
+          const ext = selected.split('.').pop()?.toLowerCase()
+          if (!filters[0].extensions.includes(ext || '')) {
+            toast.error(`Invalid file type. Expected ${filters[0].extensions.map(e => `.${e}`).join(" or ")} file`)
+            return
+          }
+        }
+
+        // Check file size
+        try {
+          const stats = await stat(selected)
+          if (stats.size > MAX_FILE_SIZE) {
+            toast.warning(`Large file detected (${Math.round(stats.size / 1024 / 1024)}MB). Processing may take longer.`, {
+              duration: 6000,
+            })
+          }
+        } catch (err) {
+          console.error("Failed to check file size:", err)
+        }
+
+        setter(selected)
       }
-    } catch (err: any) {
-      setResult({ success: false, message: "Failed to create patch." + err })
-      console.error("Failed to create patch: " + err)
+    } catch (err) {
+      toast.error("Failed to select file")
+    }
+  }
+
+  const handleSaveFile = async (
+    setter: (path: string) => void,
+    filters: { name: string; extensions: string[] }[]
+  ) => {
+    try {
+      const selected = await save({
+        filters,
+      })
+      if (selected) {
+        setter(selected)
+      }
+    } catch (err) {
+      toast.error("Failed to select save location")
     }
   }
 
   const handleApplyPatch = async () => {
     try {
-      const { fileToPatchPath, patchFilePath, outputDir } = applyPatchInputs
-      console.log(`Applying patch with fileToPatchPath: ${fileToPatchPath}`)
+      if (!originalPath) throw new Error("Please select the original file")
+      if (!patchPath) throw new Error("Please select the patch file")
+      if (!outputPath) throw new Error("Please specify where to save the patched file")
 
-      if (!fileToPatchPath || !patchFilePath) {
-        setResult({ success: false, message: "Please select both the file to patch and the patch file." })
-        return
-      }
+      setIsApplyingPatch(true)
+      toast.loading("Applying patch...", { id: "apply-patch" })
 
-      const decoded = await invoke('apply_patch', {
-        args: {
-          file_to_patch_path: fileToPatchPath,
-          patch_file_path: patchFilePath,
-          output_dir: outputDir,
-          file_to_patch_name: fileToPatchPath.split('\\').pop()
-        }
+      await invoke("apply_patch", {
+        originalPath,
+        patchPath,
+        outputPath,
       })
-      if (decoded) {
-        setResult({ success: true, message: "Patch applied successfully." })
-        console.info("Patch applied successfully")
-      }
-    } catch (err: any) {
-      setResult({ success: false, message: "Failed to apply patch." + err })
-      console.error("Failed to apply patch: " + err)
+
+      toast.success("Patch applied successfully!", { id: "apply-patch" })
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to apply patch", { id: "apply-patch" })
+    } finally {
+      setIsApplyingPatch(false)
     }
   }
 
-  const handleFileSelect = async (operation: "original" | "edited" | "fileToPatch" | "patchFile") => {
-    const selectedFile = await open({
-      multiple: false,
-    });
+  const handleCreatePatch = async () => {
+    try {
+      if (!sourcePath) throw new Error("Please select the source file")
+      if (!modifiedPath) throw new Error("Please select the modified file")
+      if (!exportPatchPath) throw new Error("Please specify where to save the patch")
 
-    if (typeof selectedFile === 'string') {
-      if (operation === "original") {
-        setCreatePatchInputs((prev) => ({ ...prev, originalFilePath: selectedFile }));
-      } else if (operation === "edited") {
-        setCreatePatchInputs((prev) => ({ ...prev, editedFilePath: selectedFile }));
-      } else if (operation === "fileToPatch") {
-        setApplyPatchInputs((prev) => ({ ...prev, fileToPatchPath: selectedFile }));
-      } else if (operation === "patchFile") {
-        setApplyPatchInputs((prev) => ({ ...prev, patchFilePath: selectedFile }));
-      }
+      setIsCreatingPatch(true)
+      toast.loading("Creating patch...", { id: "create-patch" })
+
+      await invoke("create_patch", {
+        sourcePath,
+        targetPath: modifiedPath,
+        patchPath: exportPatchPath,
+      })
+
+      toast.success("Patch created successfully!", { id: "create-patch" })
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to create patch", { id: "create-patch" })
+    } finally {
+      setIsCreatingPatch(false)
     }
-  };
-
-  const handleFolderSelect = async (operation: "create" | "apply") => {
-    const selectedFolder = await open({
-      directory: true,
-      multiple: false,
-    });
-
-    if (typeof selectedFolder === 'string') {
-      if (operation === "create") {
-        setCreatePatchInputs((prev) => ({ ...prev, outputDir: selectedFolder }));
-      } else {
-        setApplyPatchInputs((prev) => ({ ...prev, outputDir: selectedFolder }));
-      }
-    }
-  };
+  }
 
   return (
-    <div className="flex flex-col items-center gap-4">
+    <div className="container max-w-3xl">
       <NavLink
         to="/"
-        className="self-start rounded-lg border px-4 py-2 text-sm hover:bg-accent"
+        className="fixed top-4 left-4 inline-flex items-center text-sm text-muted-foreground hover:text-foreground z-50 p-4 -m-4"
       >
-        ← Back
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="24"
+          height="24"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="mr-2 h-4 w-4"
+        >
+          <path d="m12 19-7-7 7-7"/>
+          <path d="M19 12H5"/>
+        </svg>
+        Back to Tools
       </NavLink>
-      <Card className="flex w-full max-w-sm flex-col gap-6 p-6">
-        <CardContent>
-          <Tabs defaultValue="apply">
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="apply">Apply Patch</TabsTrigger>
-              <TabsTrigger value="create">Create Patch</TabsTrigger>
-            </TabsList>
-            <TabsContent value="apply">
-              <div className="space-y-4 mt-4">
-                <div className="space-y-2">
-                  <Label htmlFor="fileToPatch">File to Patch</Label>
-                  <div className="flex items-center space-x-2">
-                    <Input
-                      id="fileToPatch"
-                      type="text"
-                      readOnly
-                      value={applyPatchInputs.fileToPatchPath}
-                      placeholder="Select file to patch"
-                    />
-                    <Button type="button" variant="secondary" onClick={() => handleFileSelect("fileToPatch")}>
-                      Browse
-                    </Button>
-                  </div>
+
+      <div className="mb-8">
+        <Logo />
+        <p className="text-lg text-center text-muted-foreground mt-2">
+          Binary Patcher
+        </p>
+      </div>
+
+      <Tabs defaultValue="user" className="w-full">
+        <TabsList className="grid w-full grid-cols-2">
+          <TabsTrigger value="user">Apply Patch</TabsTrigger>
+          <TabsTrigger value="author">Create Patch</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="user">
+          <Card>
+            <CardHeader>
+              <CardTitle>Apply Binary Patch</CardTitle>
+              <CardDescription>
+                Apply an xdelta3 patch to your original file
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="original-file">Original File</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="original-file"
+                    value={originalPath}
+                    readOnly
+                    placeholder="Select your original file..."
+                  />
+                  <Button
+                    onClick={() => handleSelectFile(setOriginalPath)}
+                  >
+                    Browse
+                  </Button>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="patchFile">Patch File</Label>
-                  <div className="flex items-center space-x-2">
-                    <Input
-                      id="patchFile"
-                      type="text"
-                      readOnly
-                      value={applyPatchInputs.patchFilePath}
-                      placeholder="Select patch file"
-                    />
-                    <Button type="button" variant="secondary" onClick={() => handleFileSelect("patchFile")}>
-                      Browse
-                    </Button>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="applyOutputDir">Output Directory</Label>
-                  <div className="flex items-center space-x-2">
-                    <Input
-                      id="applyOutputDir"
-                      type="text"
-                      readOnly
-                      value={applyPatchInputs.outputDir}
-                      placeholder="Select output folder"
-                    />
-                    <Button type="button" variant="secondary" onClick={() => handleFolderSelect("apply")}>
-                      Browse
-                    </Button>
-                  </div>
-                </div>
-                <Button
-                  onClick={handleApplyPatch}
-                  disabled={!applyPatchInputs.fileToPatchPath || !applyPatchInputs.patchFilePath || !applyPatchInputs.outputDir}
-                >
-                  Apply Patch
-                </Button>
               </div>
-            </TabsContent>
-            <TabsContent value="create">
-              <div className="space-y-4 mt-4">
-                <div className="space-y-2">
-                  <Label htmlFor="originalFile">Original File</Label>
-                  <div className="flex items-center space-x-2">
-                    <Input
-                      id="originalFile"
-                      type="text"
-                      readOnly
-                      value={createPatchInputs.originalFilePath}
-                      placeholder="Select original file"
-                    />
-                    <Button type="button" variant="secondary" onClick={() => handleFileSelect("original")}>
-                      Browse
-                    </Button>
-                  </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="patch-file">Patch File</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="patch-file"
+                    value={patchPath}
+                    readOnly
+                    placeholder="Select the patch file..."
+                  />
+                  <Button
+                    onClick={() =>
+                      handleSelectFile(setPatchPath, [
+                        { name: "xDelta3 Patch", extensions: PATCH_EXTENSIONS },
+                      ])
+                    }
+                  >
+                    Browse
+                  </Button>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="editedFile">Edited File</Label>
-                  <div className="flex items-center space-x-2">
-                    <Input
-                      id="editedFile"
-                      type="text"
-                      readOnly
-                      value={createPatchInputs.editedFilePath}
-                      placeholder="Select edited file"
-                    />
-                    <Button type="button" variant="secondary" onClick={() => handleFileSelect("edited")}>
-                      Browse
-                    </Button>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="createOutputDir">Output Directory</Label>
-                  <div className="flex items-center space-x-2">
-                    <Input
-                      id="createOutputDir"
-                      type="text"
-                      readOnly
-                      value={createPatchInputs.outputDir}
-                      placeholder="Select output folder"
-                    />
-                    <Button type="button" variant="secondary" onClick={() => handleFolderSelect("create")}>
-                      Browse
-                    </Button>
-                  </div>
-                </div>
-                <Button
-                  onClick={handleCreatePatch}
-                  disabled={!createPatchInputs.originalFilePath || !createPatchInputs.editedFilePath || !createPatchInputs.outputDir}
-                >
-                  Create Patch
-                </Button>
               </div>
-            </TabsContent>
-          </Tabs>
-        </CardContent>
-        <CardFooter>
-          {result && (
-            <Alert variant={result.success ? "default" : "destructive"}>
-              <AlertTitle>{result.success ? "Success" : "Error"}</AlertTitle>
-              <AlertDescription>{result.message}</AlertDescription>
-            </Alert>
-          )}
-        </CardFooter>
-      </Card>
+
+              <div className="space-y-2">
+                <Label htmlFor="output-file">Save Patched File As</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="output-file"
+                    value={outputPath}
+                    readOnly
+                    placeholder="Choose where to save the patched file..."
+                  />
+                  <Button
+                    onClick={() => handleSaveFile(setOutputPath, [])}
+                  >
+                    Browse
+                  </Button>
+                </div>
+              </div>
+
+              <Button
+                className="w-full"
+                onClick={handleApplyPatch}
+                disabled={!originalPath || !patchPath || !outputPath || isApplyingPatch}
+              >
+                {isApplyingPatch ? "Applying Patch..." : "Apply Patch"}
+              </Button>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="author">
+          <Card>
+            <CardHeader>
+              <CardTitle>Create Binary Patch</CardTitle>
+              <CardDescription>
+                Create an xdelta3 patch by comparing original and modified files
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="rounded-lg border p-4">
+                <h3 className="font-medium mb-2">Create Patch</h3>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Select the original and modified files to generate a patch that can transform one into the other.
+                </p>
+                <div className="space-y-4">
+                  <div className="flex gap-2">
+                    <Input
+                      value={sourcePath}
+                      readOnly
+                      placeholder="Select original file..."
+                    />
+                    <Button
+                      onClick={() => handleSelectFile(setSourcePath)}
+                    >
+                      Browse
+                    </Button>
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      value={modifiedPath}
+                      readOnly
+                      placeholder="Select modified file..."
+                    />
+                    <Button
+                      onClick={() => handleSelectFile(setModifiedPath)}
+                    >
+                      Browse
+                    </Button>
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      value={exportPatchPath}
+                      readOnly
+                      placeholder="Save patch file as..."
+                    />
+                    <Button
+                      onClick={() =>
+                        handleSaveFile(setExportPatchPath, [
+                          { name: "xDelta3 Patch", extensions: [PATCH_EXTENSIONS[0]] },
+                        ])
+                      }
+                    >
+                      Browse
+                    </Button>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Button
+                      onClick={handleCreatePatch}
+                      disabled={!sourcePath || !modifiedPath || !exportPatchPath || isCreatingPatch}
+                    >
+                      {isCreatingPatch ? "Creating Patch..." : "Create Patch"}
+                    </Button>
+                    <p className="text-xs text-muted-foreground text-center">
+                      The patch will contain only the differences between files. Users will need their own copy of the original file to apply the patch.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }
