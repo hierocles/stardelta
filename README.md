@@ -1,13 +1,17 @@
-![StarDelta Logo](assets/StarDelta%20Logo.svg)
+# ![StarDelta Logo](assets/StarDelta%20Logo.svg)
 
-
-StarDelta is an xdelta3 patcher for Starfield UIs. It allows you to create and apply patches to files using the xdelta3 algorithm.
+StarDelta is an xdelta3 patcher for Starfield UIs. It allows you to create and apply patches to files using the xdelta3 algorithm, and includes special support for modifying SWF files.
 
 ## Features
 
-- Create patches from original and edited files.
-- Apply patches to files.
-- Save patches and patched files to user-specified directories.
+- Create patches from original and edited files
+- Apply patches to files
+- Save patches and patched files to user-specified directories
+- Special SWF file support:
+  - Convert SWF files to JSON for editing
+  - Replace shapes in SWF files with SVG shapes
+  - Modify SWF properties like background color and bounds
+  - Convert modified JSON back to SWF
 
 ## Prerequisites
 
@@ -56,21 +60,94 @@ Official releases are built for Windows only. However, as a Tauri-based app, you
 
 ## Usage
 
-1. Open the application.
+### Basic Patching
 
-2. To create a patch:
-   - Select the "Create Patch" tab.
-   - Click "Browse" to select the original file.
-   - Click "Browse" to select the edited file.
-   - Click "Browse" to select the output directory.
-   - Click "Create Patch" to create the patch.
+1. To create a patch:
+   - Select the "Create Patch" tab
+   - Click "Browse" to select the original file
+   - Click "Browse" to select the edited file
+   - Click "Browse" to select the output directory
+   - Click "Create Patch" to create the patch
 
-3. To apply a patch:
-   - Select the "Apply Patch" tab.
-   - Click "Browse" to select the file to patch.
-   - Click "Browse" to select the patch file.
-   - Click "Browse" to select the output directory.
-   - Click "Apply Patch" to apply the patch.
+2. To apply a patch:
+   - Select the "Apply Patch" tab
+   - Click "Browse" to select the file to patch
+   - Click "Browse" to select the patch file
+   - Click "Browse" to select the output directory
+   - Click "Apply Patch" to apply the patch
+
+### SWF Modification
+
+1. Convert SWF to JSON:
+
+   ```sh
+   # Using the UI:
+   1. Select the SWF file
+   2. Choose "Convert to JSON"
+   3. Select output location
+   ```
+
+2. Replace shapes with SVG:
+   - Create a configuration JSON file:
+
+   ```json
+   {
+     "file": [
+       {
+         "source": "path/to/shapes.svg",
+         "shapes": [1, 3, 6]  // Shape IDs to replace
+       }
+     ],
+     "swf": {
+       "bounds": {
+         "x": { "min": 0, "max": 960 },
+         "y": { "min": 0, "max": 540 }
+       },
+       "modifications": [
+         {
+           "tag": "SetBackgroundColorTag",
+           "id": 0,
+           "properties": {
+             "backgroundColor": {
+               "r": 255,
+               "g": 255,
+               "b": 255,
+               "a": 255
+             }
+           }
+         }
+       ]
+     }
+   }
+   ```
+
+   - Apply modifications:
+
+   ```sh
+   # Using the UI:
+   1. Select the JSON file
+   2. Choose "Apply Modifications"
+   3. Select the configuration file
+   4. Choose output location
+   ```
+
+3. Convert back to SWF:
+
+   ```sh
+   # Using the UI:
+   1. Select the modified JSON file
+   2. Choose "Convert to SWF"
+   3. Select output location
+   ```
+
+### SVG Support
+
+The tool supports converting SVG shapes to SWF format with the following features:
+
+- Path commands: MoveTo, LineTo, CurveTo (cubic beziers approximated as quadratic)
+- Fill and stroke styles with opacity
+- Transform attributes (translate, scale, rotate, matrix)
+- Automatic bounds calculation with padding
 
 ## Contributing
 

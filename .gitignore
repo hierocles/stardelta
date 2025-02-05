@@ -27,3 +27,4 @@ src-tauri/target
 src-tauri/gen/schemas
 
 .planning
+.cursor
