@@ -15,19 +15,20 @@ use tauri::{command, AppHandle};
 use xmlparser::{Token, Tokenizer};
 
 #[derive(Debug, Deserialize)]
-struct ModificationConfig {
-    file: Option<Vec<ShapeSource>>,
-    swf: SwfModification,
+pub struct ModificationConfig {
+    pub file: Option<Vec<ShapeSource>>,
+    pub transparent: Option<Vec<u16>>,  // Shape IDs to make transparent
+    pub swf: SwfModification,
 }
 
 #[derive(Debug, Deserialize)]
-struct ShapeSource {
+pub struct ShapeSource {
     source: String,
     shapes: Vec<u16>,
 }
 
 #[derive(Debug, Deserialize)]
-struct SwfModification {
+pub struct SwfModification {
     bounds: Option<Bounds>,
     modifications: Vec<TagModification>,
 }
@@ -60,17 +61,28 @@ pub fn convert_swf_to_json(
     log::trace!("Converting SWF to JSON: {} -> {}", swf_path, json_path);
 
     // Read SWF file
-    let swf_data = fs::read(&swf_path).map_err(|e| format!("Failed to read SWF file: {}", e))?;
+    let swf_data = fs::read(&swf_path).map_err(|e| {
+        log::error!("Failed to read SWF file '{}': {}", swf_path, e);
+        format!("Failed to read SWF file '{}': {}", swf_path, e)
+    })?;
 
     // Parse SWF to Movie
-    let movie = parse_swf(&swf_data).map_err(|e| format!("Failed to parse SWF: {}", e))?;
+    let movie = parse_swf(&swf_data).map_err(|e| {
+        log::error!("Failed to parse SWF file '{}': {}", swf_path, e);
+        format!("Failed to parse SWF file '{}': {}", swf_path, e)
+    })?;
 
     // Serialize to JSON
-    let json = serde_json::to_string_pretty(&movie)
-        .map_err(|e| format!("Failed to convert to JSON: {}", e))?;
+    let json = serde_json::to_string_pretty(&movie).map_err(|e| {
+        log::error!("Failed to convert SWF to JSON for '{}': {}", swf_path, e);
+        format!("Failed to convert SWF to JSON for '{}': {}", swf_path, e)
+    })?;
 
     // Write JSON file
-    fs::write(&json_path, json).map_err(|e| format!("Failed to write JSON file: {}", e))?;
+    fs::write(&json_path, json).map_err(|e| {
+        log::error!("Failed to write JSON file '{}': {}", json_path, e);
+        format!("Failed to write JSON file '{}': {}", json_path, e)
+    })?;
 
     Ok(())
 }
@@ -82,52 +94,90 @@ pub fn apply_json_modifications(
     config_json_path: String,
     output_json_path: String,
 ) -> Result<(), String> {
-    log::trace!(
-        "Applying JSON modifications: {} + {} -> {}",
-        swf_json_path,
-        config_json_path,
-        output_json_path
-    );
+    println!("Starting JSON modifications process...");
+    println!("SWF JSON path: {}", swf_json_path);
+    println!("Config JSON path: {}", config_json_path);
+    println!("Output JSON path: {}", output_json_path);
 
     // Read SWF JSON
-    let swf_json = fs::read_to_string(&swf_json_path)
-        .map_err(|e| format!("Failed to read SWF JSON: {}", e))?;
-    let mut movie: Movie =
-        serde_json::from_str(&swf_json).map_err(|e| format!("Failed to parse SWF JSON: {}", e))?;
+    let swf_json = fs::read_to_string(&swf_json_path).map_err(|e| {
+        println!("Failed to read SWF JSON file '{}': {}", swf_json_path, e);
+        format!("Failed to read SWF JSON file: {}", e)
+    })?;
+
+    let mut movie: Movie = serde_json::from_str(&swf_json).map_err(|e| {
+        println!("Failed to parse SWF JSON file '{}': {}", swf_json_path, e);
+        format!("Failed to parse SWF JSON file: {}", e)
+    })?;
 
     // Read config JSON
-    let config_json = fs::read_to_string(&config_json_path)
-        .map_err(|e| format!("Failed to read config JSON: {}", e))?;
-    let config: ModificationConfig = serde_json::from_str(&config_json)
-        .map_err(|e| format!("Failed to parse config JSON: {}", e))?;
+    let config_json = fs::read_to_string(&config_json_path).map_err(|e| {
+        println!("Failed to read config JSON file '{}': {}", config_json_path, e);
+        format!("Failed to read config JSON file: {}", e)
+    })?;
+
+    println!("Config JSON content: {}", config_json);
+
+    let config: ModificationConfig = serde_json::from_str(&config_json).map_err(|e| {
+        println!("Failed to parse config JSON file '{}': {}", config_json_path, e);
+        format!("Failed to parse config JSON file: {}", e)
+    })?;
+
+    // Apply transparency if specified
+    if let Some(transparent_shapes) = &config.transparent {
+        println!("Applying transparency...");
+        if let Err(e) = apply_transparency(&mut movie, transparent_shapes) {
+            println!("Error applying transparency: {}", e);
+            return Err(format!("Failed to apply transparency: {}", e));
+        }
+    }
 
     // Apply shape replacements if specified
     if let Some(shape_sources) = &config.file {
-        apply_shape_replacements(&mut movie, shape_sources)?;
+        println!("Applying shape replacements...");
+        if let Err(e) = apply_shape_replacements(&mut movie, shape_sources, &config_json_path) {
+            println!("Error applying shape replacements: {}", e);
+            return Err(format!("Failed to apply shape replacements: {}", e));
+        }
     }
 
     // Apply other modifications
-    apply_modifications(&mut movie, &config.swf)?;
+    println!("Applying SWF modifications...");
+    if let Err(e) = apply_modifications(&mut movie, &config.swf) {
+        println!("Error applying modifications: {}", e);
+        return Err(format!("Failed to apply modifications: {}", e));
+    }
 
     // Write modified JSON
-    let modified_json = serde_json::to_string_pretty(&movie)
-        .map_err(|e| format!("Failed to serialize modified JSON: {}", e))?;
-    fs::write(&output_json_path, modified_json)
-        .map_err(|e| format!("Failed to write modified JSON: {}", e))?;
+    let modified_json = serde_json::to_string_pretty(&movie).map_err(|e| {
+        println!("Failed to serialize modified JSON: {}", e);
+        format!("Failed to serialize modified JSON: {}", e)
+    })?;
 
+    fs::write(&output_json_path, modified_json).map_err(|e| {
+        println!("Failed to write modified JSON file '{}': {}", output_json_path, e);
+        format!("Failed to write modified JSON file: {}", e)
+    })?;
+
+    println!("JSON modifications completed successfully");
     Ok(())
 }
 
-fn apply_shape_replacements(movie: &mut Movie, sources: &[ShapeSource]) -> Result<(), String> {
+fn apply_shape_replacements(movie: &mut Movie, sources: &[ShapeSource], config_path: &str) -> Result<(), String> {
+    // Get the config file's directory
+    let config_dir = Path::new(config_path)
+        .parent()
+        .ok_or_else(|| "Could not determine config file directory".to_string())?;
+
     for source in sources {
-        // Read and parse the source file (SVG)
-        let source_path = Path::new(&source.source);
-        let shapes = parse_shape_source(source_path)
+        // Resolve the source path relative to the config file's directory
+        let source_path = config_dir.join(&source.source);
+        let shapes = parse_shape_source(&source_path)
             .map_err(|e| format!("Failed to parse shape source '{}': {}", source.source, e))?;
 
         // Replace each specified shape ID with the new shape
         for &shape_id in &source.shapes {
-            replace_shape_in_movie(movie, shape_id, &shapes)
+            replace_shape_in_movie(movie, shape_id, shapes.as_slice())
                 .map_err(|e| format!("Failed to replace shape {}: {}", shape_id, e))?;
         }
     }
@@ -182,7 +232,6 @@ fn parse_shape_source(path: &Path) -> Result<Vec<Shape>, String> {
             Token::ElementStart { local, .. } => {
                 if local.as_str() == "path" {
                     in_path = true;
-                    // Reset attributes for new path
                     transform = None;
                     path_data = None;
                     fill_color = None;
@@ -217,7 +266,6 @@ fn parse_shape_source(path: &Path) -> Result<Vec<Shape>, String> {
                         };
                     }
                     "stroke-width" => {
-                        // Parse as a raw number for now
                         if let Ok(n) = value.as_str().parse::<f32>() {
                             stroke_width = n;
                         }
@@ -253,7 +301,6 @@ fn parse_shape_source(path: &Path) -> Result<Vec<Shape>, String> {
                                 } else {
                                     Point::new(current_pos.x + x as f64, current_pos.y + y as f64)
                                 };
-                                // Apply transform if present
                                 let transformed_point = transform
                                     .as_ref()
                                     .map(|t| apply_transform(point, t))
@@ -264,9 +311,9 @@ fn parse_shape_source(path: &Path) -> Result<Vec<Shape>, String> {
                                             x: transformed_point.x as i32,
                                             y: transformed_point.y as i32,
                                         }),
-                                        left_fill: Some(1),
+                                        left_fill: if fill_color.is_some() { Some(1) } else { None },
                                         right_fill: None,
-                                        line_style: Some(1),
+                                        line_style: if stroke_color.is_some() { Some(1) } else { None },
                                         new_styles: None,
                                     },
                                 ));
@@ -278,7 +325,6 @@ fn parse_shape_source(path: &Path) -> Result<Vec<Shape>, String> {
                                 } else {
                                     Point::new(current_pos.x + x as f64, current_pos.y + y as f64)
                                 };
-                                // Apply transform if present
                                 let transformed_point = transform
                                     .as_ref()
                                     .map(|t| apply_transform(point, t))
@@ -300,7 +346,6 @@ fn parse_shape_source(path: &Path) -> Result<Vec<Shape>, String> {
                                 x,
                                 y,
                             } => {
-                                // Convert cubic bezier to quadratic by approximating control point
                                 let control = if abs {
                                     Point::new(((x1 + x2) / 2.0) as f64, ((y1 + y2) / 2.0) as f64)
                                 } else {
@@ -314,7 +359,6 @@ fn parse_shape_source(path: &Path) -> Result<Vec<Shape>, String> {
                                 } else {
                                     Point::new(current_pos.x + x as f64, current_pos.y + y as f64)
                                 };
-                                // Apply transform if present
                                 let transformed_control = transform
                                     .as_ref()
                                     .map(|t| apply_transform(control, t))
@@ -335,7 +379,6 @@ fn parse_shape_source(path: &Path) -> Result<Vec<Shape>, String> {
                                 current_pos = transformed_end;
                             }
                             PathSegment::ClosePath { .. } => {
-                                // Find first point to close the path
                                 let mut first_point = None;
                                 for record in &current_shape.records {
                                     if let ShapeRecord::StyleChange(change) = record {
@@ -363,7 +406,7 @@ fn parse_shape_source(path: &Path) -> Result<Vec<Shape>, String> {
                         }
                     }
 
-                    // Add styles
+                    // Add styles if specified
                     if let Some(color) = fill_color {
                         current_shape.initial_styles.fill.push(FillStyle::Solid(
                             fill_styles::Solid {
@@ -415,21 +458,46 @@ fn parse_shape_source(path: &Path) -> Result<Vec<Shape>, String> {
     Ok(shapes)
 }
 
-fn replace_shape_in_movie(
-    movie: &mut Movie,
-    shape_id: u16,
-    new_shapes: &[Shape],
-) -> Result<(), String> {
+fn replace_shape_in_movie(movie: &mut Movie, shape_id: u16, new_shapes: &[Shape]) -> Result<(), String> {
+    println!("Attempting to replace shape ID: {}", shape_id);
+    println!("Number of new shapes available: {}", new_shapes.len());
+
     // Find the shape tag with matching ID
     for tag in &mut movie.tags {
         if let Tag::DefineShape(tag) = tag {
             if tag.id == shape_id {
+                println!("Found shape with ID {}", shape_id);
                 // Find a matching shape from the new shapes
-                // For now, just use the first shape as we need to determine matching logic
                 if let Some(new_shape) = new_shapes.first() {
-                    tag.shape = new_shape.clone();
-                    // Update bounds based on the new shape
-                    tag.bounds = calculate_shape_bounds(&tag.shape)?;
+                    println!("Original shape styles: {:?}", tag.shape.initial_styles);
+                    println!("New shape styles: {:?}", new_shape.initial_styles);
+
+                    // Create a new shape with the original bitmap fills
+                    let mut modified_shape = new_shape.clone();
+
+                    // If the new shape has no fills and the original has bitmap fills, preserve them
+                    if modified_shape.initial_styles.fill.is_empty() && !tag.shape.initial_styles.fill.is_empty() {
+                        // Keep the original bitmap fills
+                        modified_shape.initial_styles.fill = tag.shape.initial_styles.fill.clone();
+
+                        // Update all shape records to use the first bitmap fill
+                        for record in &mut modified_shape.records {
+                            if let ShapeRecord::StyleChange(change) = record {
+                                // Set left_fill to 1 to use the first bitmap fill
+                                change.left_fill = Some(1);
+                                change.right_fill = None;
+                            }
+                        }
+                    }
+
+                    // Calculate new bounds before assigning
+                    let new_bounds = calculate_shape_bounds(&modified_shape)?;
+                    println!("New shape bounds: {:?}", new_bounds);
+
+                    // Update the shape and bounds
+                    tag.shape = modified_shape;
+                    tag.bounds = new_bounds;
+
                     return Ok(());
                 }
             }
@@ -459,7 +527,6 @@ fn calculate_shape_bounds(shape: &Shape) -> Result<Rect, String> {
                 }
             }
             ShapeRecord::Edge(edge) => {
-                // Update current position with delta
                 current_x += edge.delta.x;
                 current_y += edge.delta.y;
                 min_x = min_x.min(current_x);
@@ -467,7 +534,6 @@ fn calculate_shape_bounds(shape: &Shape) -> Result<Rect, String> {
                 min_y = min_y.min(current_y);
                 max_y = max_y.max(current_y);
 
-                // If there's a control point (quadratic bezier), include it in bounds
                 if let Some(control) = &edge.control_delta {
                     let control_x = current_x - edge.delta.x + control.x;
                     let control_y = current_y - edge.delta.y + control.y;
@@ -480,7 +546,6 @@ fn calculate_shape_bounds(shape: &Shape) -> Result<Rect, String> {
         }
     }
 
-    // If no points were processed, return empty bounds
     if min_x == i32::MAX {
         return Ok(Rect {
             x_min: 0,
@@ -490,7 +555,6 @@ fn calculate_shape_bounds(shape: &Shape) -> Result<Rect, String> {
         });
     }
 
-    // Add a small padding to ensure shapes aren't clipped
     const PADDING: i32 = 10;
     Ok(Rect {
         x_min: min_x - PADDING,
@@ -501,7 +565,6 @@ fn calculate_shape_bounds(shape: &Shape) -> Result<Rect, String> {
 }
 
 fn apply_modifications(movie: &mut Movie, config: &SwfModification) -> Result<(), String> {
-    // Apply bounds if specified
     if let Some(bounds) = &config.bounds {
         movie.header.frame_size.x_min = bounds.x.min;
         movie.header.frame_size.x_max = bounds.x.max;
@@ -509,7 +572,6 @@ fn apply_modifications(movie: &mut Movie, config: &SwfModification) -> Result<()
         movie.header.frame_size.y_max = bounds.y.max;
     }
 
-    // Apply tag modifications
     for modification in &config.modifications {
         apply_tag_modification(movie, modification)?;
     }
@@ -518,10 +580,8 @@ fn apply_modifications(movie: &mut Movie, config: &SwfModification) -> Result<()
 }
 
 fn apply_tag_modification(movie: &mut Movie, modification: &TagModification) -> Result<(), String> {
-    // Find the tag with matching ID
     for tag in &mut movie.tags {
         match (tag, modification.tag.as_str()) {
-            // Define tags
             (Tag::DefineBinaryData(tag), "DefineBinaryDataTag") if tag.id == modification.id => {
                 if let Some(data) = modification.properties.get("data") {
                     tag.data = serde_json::from_value(data.clone())
@@ -593,12 +653,10 @@ fn apply_tag_modification(movie: &mut Movie, modification: &TagModification) -> 
                 }
             }
             (Tag::DefineShape(tag), "DefineShapeTag") if tag.id == modification.id => {
-                // Handle complete shape replacement
                 if let Some(shape) = modification.properties.get("shape") {
                     tag.shape = serde_json::from_value(shape.clone())
                         .map_err(|e| format!("Failed to parse shape: {}", e))?;
                 } else {
-                    // Handle individual shape components
                     if let Some(bounds) = modification.properties.get("bounds") {
                         tag.bounds = serde_json::from_value(bounds.clone())
                             .map_err(|e| format!("Failed to parse shape bounds: {}", e))?;
@@ -611,7 +669,6 @@ fn apply_tag_modification(movie: &mut Movie, modification: &TagModification) -> 
                         tag.shape.initial_styles = serde_json::from_value(styles.clone())
                             .map_err(|e| format!("Failed to parse shape styles: {}", e))?;
                     } else {
-                        // Handle fill and line styles separately
                         if let Some(fill_styles) = modification.properties.get("fillStyles") {
                             tag.shape.initial_styles.fill =
                                 serde_json::from_value(fill_styles.clone())
@@ -638,7 +695,6 @@ fn apply_tag_modification(movie: &mut Movie, modification: &TagModification) -> 
                 }
             }
 
-            // Control tags
             (Tag::DoAbc(tag), "DoAbcTag") => {
                 if let Some(data) = modification.properties.get("data") {
                     tag.data = serde_json::from_value(data.clone())
@@ -713,7 +769,6 @@ fn apply_tag_modification(movie: &mut Movie, modification: &TagModification) -> 
                 }
             }
 
-            // Scene and Frame Data
             (Tag::DefineSceneAndFrameLabelData(tag), "DefineSceneAndFrameLabelDataTag") => {
                 if let Some(scenes) = modification.properties.get("scenes") {
                     tag.scenes = serde_json::from_value(scenes.clone())
@@ -736,22 +791,122 @@ pub fn convert_json_to_swf(
     json_path: String,
     swf_path: String,
 ) -> Result<(), String> {
-    log::trace!("Converting JSON to SWF: {} -> {}", json_path, swf_path);
+    println!("Starting SWF conversion process...");
+    println!("Input JSON: {}", json_path);
+    println!("Output SWF: {}", swf_path);
 
-    // Read JSON file
-    let json_data =
-        fs::read_to_string(&json_path).map_err(|e| format!("Failed to read JSON file: {}", e))?;
+    // Read the modified JSON
+    println!("Reading modified JSON file...");
+    let json_data = fs::read_to_string(&json_path).map_err(|e| {
+        println!("Failed to read JSON file: {}", e);
+        format!("Failed to read JSON file '{}': {}", json_path, e)
+    })?;
 
     // Parse JSON to Movie
-    let movie: Movie =
-        serde_json::from_str(&json_data).map_err(|e| format!("Failed to parse JSON: {}", e))?;
+    println!("Parsing JSON to Movie structure...");
+    let movie: Movie = serde_json::from_str(&json_data).map_err(|e| {
+        println!("Failed to parse JSON to Movie: {}", e);
+        format!("Failed to parse JSON file '{}': {}", json_path, e)
+    })?;
 
     // Convert Movie to binary SWF
-    let swf_data = emit_swf(&movie, swf_types::CompressionMethod::None)
-        .map_err(|e| format!("Failed to create SWF: {}", e))?;
+    println!("Converting Movie to binary SWF...");
+    let swf_data = emit_swf(&movie, swf_types::CompressionMethod::None).map_err(|e| {
+        println!("Failed to emit SWF: {}", e);
+        format!("Failed to create SWF from JSON '{}': {}", json_path, e)
+    })?;
 
-    // Write SWF file
-    fs::write(&swf_path, swf_data).map_err(|e| format!("Failed to write SWF file: {}", e))?;
+    // Write the SWF file directly
+    println!("Writing SWF file to: {}", swf_path);
+    fs::write(&swf_path, swf_data).map_err(|e| {
+        println!("Failed to write SWF file: {}", e);
+        format!("Failed to write SWF file '{}': {}", swf_path, e)
+    })?;
 
+    println!("SWF conversion completed successfully");
+    Ok(())
+}
+
+#[command]
+pub fn get_file_size(_handle: AppHandle, path: String) -> Result<u64, String> {
+    let metadata = fs::metadata(path.clone()).map_err(|e| {
+        println!("Failed to get metadata for file '{}': {}", path, e);
+        format!("Failed to get file metadata: {}", e)
+    })?;
+    Ok(metadata.len())
+}
+
+fn apply_transparency(movie: &mut Movie, shape_ids: &[u16]) -> Result<(), String> {
+    println!("Making shapes transparent...");
+    for &shape_id in shape_ids {
+        println!("Making shape {} transparent", shape_id);
+
+        // Find and modify the shape tag
+        for i in 0..movie.tags.len() {
+            if let Tag::DefineShape(shape_tag) = &movie.tags[i] {
+                if shape_tag.id == shape_id {
+                    println!("Found shape {} - converting to DefineShape3 and making transparent", shape_id);
+
+                    // Create a new shape tag with the same data
+                    let mut new_shape = shape_tag.clone();
+
+                    // Convert all fill styles to transparent
+                    for fill_style in &mut new_shape.shape.initial_styles.fill {
+                        match fill_style {
+                            FillStyle::Solid(solid) => {
+                                solid.color.a = 0; // Set alpha to 0
+                            },
+                            // For other fill styles (bitmap, gradient, etc), replace with transparent solid
+                            _ => {
+                                *fill_style = FillStyle::Solid(fill_styles::Solid {
+                                    color: StraightSRgba8 {
+                                        r: 0,
+                                        g: 0,
+                                        b: 0,
+                                        a: 0,
+                                    },
+                                });
+                            }
+                        }
+                    }
+
+                    // Convert all line styles to transparent
+                    for line_style in &mut new_shape.shape.initial_styles.line {
+                        match &mut line_style.fill {
+                            FillStyle::Solid(solid) => {
+                                solid.color.a = 0; // Set alpha to 0
+                            },
+                            // For other fill styles, replace with transparent solid
+                            _ => {
+                                line_style.fill = FillStyle::Solid(fill_styles::Solid {
+                                    color: StraightSRgba8 {
+                                        r: 0,
+                                        g: 0,
+                                        b: 0,
+                                        a: 0,
+                                    },
+                                });
+                            }
+                        }
+                    }
+
+                    // Create a new DefineShape3 tag with the modified shape
+                    let new_tag = Tag::DefineShape(swf_types::tags::DefineShape {
+                        id: shape_tag.id,
+                        bounds: shape_tag.bounds.clone(),
+                        edge_bounds: None, // DefineShape3 doesn't use edge bounds
+                        has_fill_winding: false, // DefineShape3 doesn't use fill winding
+                        has_non_scaling_strokes: false,
+                        has_scaling_strokes: false,
+                        shape: new_shape.shape,
+                    });
+
+                    // Replace the old tag with the new one
+                    movie.tags[i] = new_tag;
+                    println!("Successfully converted shape {} to DefineShape3 with transparency", shape_id);
+                }
+            }
+        }
+    }
     Ok(())
 }

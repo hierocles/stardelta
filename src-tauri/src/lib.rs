@@ -7,7 +7,7 @@ use tauri::Manager;
 use tauri_plugin_decorum::WebviewWindowExt;
 
 pub fn run() {
-    let builder = tauri::Builder::default().plugin(tauri_plugin_fs::init());
+    let builder = tauri::Builder::default();
 
     #[cfg(debug_assertions)]
     let builder = builder
@@ -20,7 +20,8 @@ pub fn run() {
             xdelta::apply_patch,
             swf::convert_swf_to_json,
             swf::convert_json_to_swf,
-            swf::apply_json_modifications
+            swf::apply_json_modifications,
+            swf::get_file_size
         ])
         .plugin(tauri_plugin_decorum::init())
         .setup(|app| {

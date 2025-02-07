@@ -3,7 +3,6 @@
 import { useState } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { open, save } from "@tauri-apps/plugin-dialog"
-import { stat } from "@tauri-apps/plugin-fs"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -46,9 +45,9 @@ export function SwfPatcher() {
 
         // Check file size
         try {
-          const stats = await stat(selected)
-          if (stats.size > MAX_FILE_SIZE) {
-            toast.warning(`Large file detected (${Math.round(stats.size / 1024 / 1024)}MB). Processing may take longer.`, {
+          const size = await invoke<number>("get_file_size", { path: selected })
+          if (size > MAX_FILE_SIZE) {
+            toast.warning(`Large file detected (${Math.round(size / 1024 / 1024)}MB). Processing may take longer.`, {
               duration: 6000,
             })
           }
@@ -90,23 +89,27 @@ export function SwfPatcher() {
 
       // First convert original SWF to temporary JSON
       const tempJsonPath = originalSwfPath + ".temp.json"
-      await invoke("convert_swf_to_json", { swfPath: originalSwfPath, jsonPath: tempJsonPath })
+      await invoke("convert_swf_to_json", {
+        swfPath: originalSwfPath,
+        jsonPath: tempJsonPath
+      })
 
       // Apply the mod's modifications
       await invoke("apply_json_modifications", {
-        jsonPath: tempJsonPath,
-        modPath: modJsonPath,
-        outputJsonPath: tempJsonPath,
+        swfJsonPath: tempJsonPath,
+        configJsonPath: modJsonPath,
+        outputJsonPath: tempJsonPath
       })
 
       // Convert back to SWF
       await invoke("convert_json_to_swf", {
         jsonPath: tempJsonPath,
-        outputPath,
+        swfPath: outputPath
       })
 
       toast.success("Mod applied successfully!", { id: "apply-mod" })
     } catch (err) {
+      console.error("Error applying mod:", err)
       toast.error(err instanceof Error ? err.message : "Failed to apply mod", { id: "apply-mod" })
     } finally {
       setIsApplyingMod(false)
