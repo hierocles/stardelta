@@ -18,7 +18,7 @@
     "@radix-ui/react-progress": "^1.1.1",
     "@radix-ui/react-slot": "^1.0.2",
     "@radix-ui/react-tabs": "^1.1.2",
-    "@tauri-apps/api": "^2.0.0-alpha.13",
+    "@tauri-apps/api": "^2.2.0",
     "@tauri-apps/plugin-dialog": "^2.2.0",
     "@tauri-apps/plugin-fs": "^2.2.0",
     "@tauri-apps/plugin-log": "^2.2.0",
