@@ -21,9 +21,12 @@ pub fn run() {
             swf::convert_swf_to_json,
             swf::convert_json_to_swf,
             swf::apply_json_modifications,
-            swf::get_file_size
+            swf::get_file_size,
+            swf::batch_process_swf,
+            swf::read_file_to_string
         ])
         .plugin(tauri_plugin_decorum::init())
+
         .setup(|app| {
             let main_window = app.get_webview_window("main").unwrap();
             main_window.create_overlay_titlebar().unwrap();

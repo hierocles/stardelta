@@ -2,7 +2,7 @@ use kurbo::Point;
 use serde::Deserialize;
 use serde_json;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use svgtypes::{Color, PathParser, PathSegment, Transform};
 use swf_emitter::emit_swf;
@@ -19,6 +19,18 @@ pub struct ModificationConfig {
     pub file: Option<Vec<ShapeSource>>,
     pub transparent: Option<Vec<u16>>,  // Shape IDs to make transparent
     pub swf: SwfModification,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BatchProcessConfig {
+    pub config_file: String,           // Path to the main configuration file
+    pub output_directory: String,      // Directory to save processed files
+    pub swf_mappings: Vec<SwfMapping>, // User-selected SWF file mappings
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BatchConfiguration {
+    pub mods: Vec<ModConfig>,          // List of modification configurations
 }
 
 #[derive(Debug, Deserialize)]
@@ -50,6 +62,18 @@ struct TagModification {
     tag: String,
     id: u16,
     properties: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ModConfig {
+    pub name: String,                  // Name of the mod (for display)
+    pub config: String,                // Path to the modification config (relative to config file)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SwfMapping {
+    pub mod_name: String,              // Name of the mod to apply
+    pub swf_path: String,              // User-selected path to the SWF file
 }
 
 #[command]
@@ -838,6 +862,23 @@ pub fn get_file_size(_handle: AppHandle, path: String) -> Result<u64, String> {
 
 fn apply_transparency(movie: &mut Movie, shape_ids: &[u16]) -> Result<(), String> {
     println!("Making shapes transparent...");
+
+    // Ensure we have a high enough SWF version for alpha support
+    if movie.header.swf_version < 8 {
+        movie.header.swf_version = 8;
+    }
+
+    // First pass: Fix any dynamic text tags to ensure they have both font_class and font_size
+    for tag in &mut movie.tags {
+        if let Tag::DefineDynamicText(text) = tag {
+            if text.font_class.is_some() && text.font_size.is_none() {
+                // If we have a font class but no size, set a default size
+                text.font_size = Some(12);
+            }
+        }
+    }
+
+    // Second pass: Handle shape transparency
     for &shape_id in shape_ids {
         println!("Making shape {} transparent", shape_id);
 
@@ -847,66 +888,131 @@ fn apply_transparency(movie: &mut Movie, shape_ids: &[u16]) -> Result<(), String
                 if shape_tag.id == shape_id {
                     println!("Found shape {} - converting to DefineShape3 and making transparent", shape_id);
 
-                    // Create a new shape tag with the same data
-                    let mut new_shape = shape_tag.clone();
-
-                    // Convert all fill styles to transparent
-                    for fill_style in &mut new_shape.shape.initial_styles.fill {
-                        match fill_style {
-                            FillStyle::Solid(solid) => {
-                                solid.color.a = 0; // Set alpha to 0
-                            },
-                            // For other fill styles (bitmap, gradient, etc), replace with transparent solid
-                            _ => {
-                                *fill_style = FillStyle::Solid(fill_styles::Solid {
+                    // Create a new shape with transparent fills
+                    let new_shape = Shape {
+                        initial_styles: ShapeStyles {
+                            fill: vec![
+                                FillStyle::Solid(fill_styles::Solid {
                                     color: StraightSRgba8 {
                                         r: 0,
                                         g: 0,
                                         b: 0,
-                                        a: 0,
+                                        a: 0,  // Alpha 0 will force Shape3
                                     },
-                                });
-                            }
-                        }
-                    }
-
-                    // Convert all line styles to transparent
-                    for line_style in &mut new_shape.shape.initial_styles.line {
-                        match &mut line_style.fill {
-                            FillStyle::Solid(solid) => {
-                                solid.color.a = 0; // Set alpha to 0
-                            },
-                            // For other fill styles, replace with transparent solid
-                            _ => {
-                                line_style.fill = FillStyle::Solid(fill_styles::Solid {
+                                }),
+                                FillStyle::Solid(fill_styles::Solid {
                                     color: StraightSRgba8 {
                                         r: 0,
                                         g: 0,
                                         b: 0,
-                                        a: 0,
+                                        a: 0,  // Alpha 0 will force Shape3
                                     },
-                                });
-                            }
-                        }
-                    }
+                                }),
+                            ],
+                            line: Vec::new(),
+                        },
+                        records: shape_tag.shape.records.clone(),
+                    };
 
-                    // Create a new DefineShape3 tag with the modified shape
+                    // Create a new DefineShape tag
                     let new_tag = Tag::DefineShape(swf_types::tags::DefineShape {
-                        id: shape_tag.id,
+                        id: shape_id,
                         bounds: shape_tag.bounds.clone(),
-                        edge_bounds: None, // DefineShape3 doesn't use edge bounds
-                        has_fill_winding: false, // DefineShape3 doesn't use fill winding
+                        edge_bounds: None,  // Don't set edge_bounds to avoid forcing Shape4
+                        has_fill_winding: false,
                         has_non_scaling_strokes: false,
                         has_scaling_strokes: false,
-                        shape: new_shape.shape,
+                        shape: new_shape,
                     });
 
                     // Replace the old tag with the new one
                     movie.tags[i] = new_tag;
                     println!("Successfully converted shape {} to DefineShape3 with transparency", shape_id);
+                    break;
                 }
             }
         }
     }
+
     Ok(())
+}
+
+#[command]
+pub fn batch_process_swf(
+    _handle: AppHandle,
+    config: BatchProcessConfig,
+) -> Result<Vec<String>, String> {
+    println!("Starting batch SWF processing...");
+    let mut processed_files = Vec::new();
+
+    // Read and parse the batch configuration
+    let config_json = fs::read_to_string(&config.config_file).map_err(|e| {
+        format!("Failed to read batch config file '{}': {}", config.config_file, e)
+    })?;
+
+    let batch_config: BatchConfiguration = serde_json::from_str(&config_json).map_err(|e| {
+        format!("Failed to parse batch config file '{}': {}", config.config_file, e)
+    })?;
+
+    // Get the config file's directory for resolving relative paths
+    let config_dir = Path::new(&config.config_file)
+        .parent()
+        .ok_or_else(|| "Could not determine config file directory".to_string())?;
+
+    // Process each SWF file according to the user's mappings
+    for mapping in config.swf_mappings {
+        // Find the corresponding mod config
+        let mod_config = batch_config.mods.iter()
+            .find(|m| m.name == mapping.mod_name)
+            .ok_or_else(|| format!("Could not find mod configuration for '{}'", mapping.mod_name))?;
+
+        let config_path = config_dir.join(&mod_config.config);
+        println!("Processing SWF file: {} with config: {}", mapping.swf_path, config_path.display());
+
+        // Generate output paths
+        let file_name = Path::new(&mapping.swf_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| format!("Invalid SWF file path: {}", mapping.swf_path))?;
+        let temp_json_path = format!("{}.temp.json", mapping.swf_path);
+        let output_path = PathBuf::from(&config.output_directory)
+            .join(file_name);
+
+        // Convert SWF to JSON
+        convert_swf_to_json(_handle.clone(), mapping.swf_path.clone(), temp_json_path.clone())?;
+
+        // Apply modifications using this file's specific config
+        apply_json_modifications(
+            _handle.clone(),
+            temp_json_path.clone(),
+            config_path.to_string_lossy().to_string(),
+            temp_json_path.clone(),
+        )?;
+
+        // Convert back to SWF
+        convert_json_to_swf(
+            _handle.clone(),
+            temp_json_path.clone(),
+            output_path.to_string_lossy().to_string(),
+        )?;
+
+        // Clean up temporary JSON file
+        if let Err(e) = fs::remove_file(&temp_json_path) {
+            println!("Warning: Failed to clean up temporary file '{}': {}", temp_json_path, e);
+        }
+
+        // Add to processed files list
+        processed_files.push(output_path.to_string_lossy().to_string());
+    }
+
+    println!("Batch processing completed successfully");
+    Ok(processed_files)
+}
+
+#[command]
+pub fn read_file_to_string(_handle: AppHandle, path: String) -> Result<String, String> {
+    fs::read_to_string(&path).map_err(|e| {
+        println!("Failed to read file '{}': {}", path, e);
+        format!("Failed to read file: {}", e)
+    })
 }
