@@ -1,12 +1,12 @@
 [package]
 name = "stardelta"
-version = "1.0.0"
-description = "xdelta3 patcher for Starfield UIs"
+version = "2.1.0"
+description = "Delta patcher for Starfield UIs"
 authors = ["Dylan Henrich"]
 edition = "2021"
 license = "MIT"
 documentation = "README.md"
-keywords = ["stardelta", "xdelta3", "starfield"]
+keywords = ["stardelta", "xdelta3", "starfield", "swf"]
 categories = ["utilities"]
 build = "build.rs"
 
