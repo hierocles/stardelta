@@ -233,17 +233,13 @@ Users should be instructed to choose the Interface folder as the output director
 The following tools are required to build StarDelta:
 
 - [Rust](https://www.rust-lang.org/tools/install) - Latest stable version
-
 - [Node.js](https://nodejs.org/) - Version 16 or later
-
 - [Tauri CLI](https://v2.tauri.app/reference/cli/i)
 
 Additional platform-specific requirements:
 
 - Windows: Microsoft Visual Studio C++ Build Tools
-
 - Linux: Development packages (see Tauri prerequisites)
-
 - macOS: Xcode Command Line Tools
 
 ### Build Instructions
@@ -300,7 +296,7 @@ StarDelta is primarily developed and tested on Windows, as it targets Starfield 
 
 If you encounter issues not covered here:
 
-1. Check the [GitHub Issues](https://github.com/dylanblokhuis/stardelta/issues) for similar problems
+1. Check the [GitHub Issues](https://github.com/hierocles/stardelta/issues) for similar problems
 2. Enable debug logging by setting the environment variable `RUST_LOG=debug`
 3. Open a new issue with:
    - The error message
@@ -346,6 +342,7 @@ StarDelta uses several open-source components, each with their own licenses:
 #### Binary Diff Tools
 
 - **[xdelta3](http://xdelta.org/)** - Apache 2.0 License
+- **[xdelta3-rs](https://github.com/liushuyu/xdelta3-rs)**
   - Used for binary patch creation and application
 
 #### Frontend Dependencies
