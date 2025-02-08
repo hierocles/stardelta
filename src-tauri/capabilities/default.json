@@ -18,6 +18,8 @@
     "core:window:allow-is-maximized",
     "core:window:allow-start-dragging",
     "core:window:allow-toggle-maximize",
-    "decorum:allow-show-snap-overlay"
+    "decorum:allow-show-snap-overlay",
+    "core:window:allow-set-min-size",
+    "core:window:allow-set-content-protected"
   ]
 }

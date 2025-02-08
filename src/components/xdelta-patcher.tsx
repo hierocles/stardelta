@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { open, save } from "@tauri-apps/plugin-dialog"
 import { stat } from "@tauri-apps/plugin-fs"
@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label"
 import { NavLink } from "react-router"
 import { Logo } from "@/components/ui/logo"
 import { toast } from "sonner"
+import { Window, PhysicalSize } from "@tauri-apps/api/window"
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024 // 100MB
 const PATCH_EXTENSIONS = ["vcdiff", "xdelta", "xdelta3"]
@@ -28,6 +29,64 @@ export function XdeltaPatcher() {
   const [sourcePath, setSourcePath] = useState("")
   const [modifiedPath, setModifiedPath] = useState("")
   const [exportPatchPath, setExportPatchPath] = useState("")
+
+  const contentRef = useRef<HTMLDivElement>(null)
+  const resizeTimeout = useRef<NodeJS.Timeout | undefined>(undefined)
+
+  // Add effect to handle form input changes
+  useEffect(() => {
+    if (!contentRef.current) return;
+    const rect = contentRef.current.getBoundingClientRect();
+    const window = Window.getCurrent();
+    window.setSize(new PhysicalSize(600, Math.max(600, rect.height + 180)));
+  }, [originalPath, patchPath, outputPath, sourcePath, modifiedPath, exportPatchPath]);
+
+  // Initial window setup
+  useEffect(() => {
+    const setupWindow = async () => {
+      try {
+        const window = Window.getCurrent();
+        await window.setMinSize(new PhysicalSize(600, 600));
+        await window.setContentProtected(false);
+        await window.setSize(new PhysicalSize(600, 600));
+      } catch (err) {
+        console.error("Failed to configure window:", err);
+      }
+    };
+    setupWindow();
+  }, []);
+
+  // Smooth resize effect for content changes
+  useEffect(() => {
+    if (!contentRef.current) return;
+
+    const updateWindowSize = async (rect: DOMRect) => {
+      try {
+        const window = Window.getCurrent();
+        const newHeight = Math.max(600, rect.height + 180);
+        await window.setSize(new PhysicalSize(600, newHeight));
+      } catch (err) {
+        console.error("Failed to update window size:", err);
+      }
+    };
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      if (resizeTimeout.current) {
+        clearTimeout(resizeTimeout.current);
+      }
+      resizeTimeout.current = setTimeout(() => {
+        updateWindowSize(entries[0].target.getBoundingClientRect());
+      }, 100);
+    });
+
+    resizeObserver.observe(contentRef.current);
+    return () => {
+      resizeObserver.disconnect();
+      if (resizeTimeout.current) {
+        clearTimeout(resizeTimeout.current);
+      }
+    };
+  }, []);
 
   const handleSelectFile = async (
     setter: (path: string) => void,
@@ -130,189 +189,197 @@ export function XdeltaPatcher() {
   }
 
   return (
-    <div className="container max-w-3xl">
-      <NavLink
-        to="/"
-        className="fixed top-4 left-4 inline-flex items-center text-sm text-muted-foreground hover:text-foreground z-50 p-4 -m-4"
-      >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="24"
-          height="24"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="mr-2 h-4 w-4"
-        >
-          <path d="m12 19-7-7 7-7"/>
-          <path d="M19 12H5"/>
-        </svg>
-        Back to Tools
-      </NavLink>
+    <div className="flex flex-col min-h-screen overflow-hidden">
+      <header className="sticky top-10 z-50">
+        <div className="w-[600px] mx-auto relative px-4">
+          <NavLink
+            to="/"
+            className="fixed top-4 left-4 inline-flex items-center text-sm text-muted-foreground hover:text-foreground z-50 p-4 -m-4"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="mr-2 h-4 w-4"
+            >
+              <path d="m12 19-7-7 7-7"/>
+              <path d="M19 12H5"/>
+            </svg>
+            Back to Tools
+          </NavLink>
 
-      <div className="mb-8">
-        <Logo />
-        <p className="text-lg text-center text-muted-foreground mt-2">
-          Binary Patcher
-        </p>
-      </div>
+          <div className="py-8">
+            <Logo />
+            <p className="text-lg text-center text-muted-foreground mt-2">
+              Binary Patcher
+            </p>
+          </div>
+        </div>
+      </header>
 
-      <Tabs defaultValue="user" className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="user">Apply Patch</TabsTrigger>
-          <TabsTrigger value="author">Create Patch</TabsTrigger>
-        </TabsList>
+      <main className="flex-1 py-8">
+        <div className="w-[600px] mx-auto px-4 overflow-hidden" ref={contentRef}>
+          <Tabs defaultValue="user">
+            <TabsList className="grid grid-cols-2 mb-4">
+              <TabsTrigger value="user">Apply Patch</TabsTrigger>
+              <TabsTrigger value="author">Create Patch</TabsTrigger>
+            </TabsList>
 
-        <TabsContent value="user">
-          <Card>
-            <CardHeader>
-              <CardTitle>Apply Binary Patch</CardTitle>
-              <CardDescription>
-                Apply an xdelta3 patch to your original file
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="original-file">Original File</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="original-file"
-                    value={originalPath}
-                    readOnly
-                    placeholder="Select your original file..."
-                  />
-                  <Button
-                    onClick={() => handleSelectFile(setOriginalPath)}
-                  >
-                    Browse
-                  </Button>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="patch-file">Patch File</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="patch-file"
-                    value={patchPath}
-                    readOnly
-                    placeholder="Select the patch file..."
-                  />
-                  <Button
-                    onClick={() =>
-                      handleSelectFile(setPatchPath, [
-                        { name: "xDelta3 Patch", extensions: PATCH_EXTENSIONS },
-                      ])
-                    }
-                  >
-                    Browse
-                  </Button>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="output-file">Save Patched File As</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="output-file"
-                    value={outputPath}
-                    readOnly
-                    placeholder="Choose where to save the patched file..."
-                  />
-                  <Button
-                    onClick={() => handleSaveFile(setOutputPath, [])}
-                  >
-                    Browse
-                  </Button>
-                </div>
-              </div>
-
-              <Button
-                className="w-full"
-                onClick={handleApplyPatch}
-                disabled={!originalPath || !patchPath || !outputPath || isApplyingPatch}
-              >
-                {isApplyingPatch ? "Applying Patch..." : "Apply Patch"}
-              </Button>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="author">
-          <Card>
-            <CardHeader>
-              <CardTitle>Create Binary Patch</CardTitle>
-              <CardDescription>
-                Create an xdelta3 patch by comparing original and modified files
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="rounded-lg border p-4">
-                <h3 className="font-medium mb-2">Create Patch</h3>
-                <p className="text-sm text-muted-foreground mb-4">
-                  Select the original and modified files to generate a patch that can transform one into the other.
-                </p>
-                <div className="space-y-4">
-                  <div className="flex gap-2">
-                    <Input
-                      value={sourcePath}
-                      readOnly
-                      placeholder="Select original file..."
-                    />
-                    <Button
-                      onClick={() => handleSelectFile(setSourcePath)}
-                    >
-                      Browse
-                    </Button>
+            <TabsContent value="user">
+              <Card className="min-h-[400px]">
+                <CardHeader>
+                  <CardTitle>Apply Binary Patch</CardTitle>
+                  <CardDescription>
+                    Apply an xdelta3 patch to your original file
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="original-file">Original File</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        id="original-file"
+                        value={originalPath}
+                        readOnly
+                        placeholder="Select your original file..."
+                      />
+                      <Button
+                        onClick={() => handleSelectFile(setOriginalPath)}
+                      >
+                        Browse
+                      </Button>
+                    </div>
                   </div>
-                  <div className="flex gap-2">
-                    <Input
-                      value={modifiedPath}
-                      readOnly
-                      placeholder="Select modified file..."
-                    />
-                    <Button
-                      onClick={() => handleSelectFile(setModifiedPath)}
-                    >
-                      Browse
-                    </Button>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="patch-file">Patch File</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        id="patch-file"
+                        value={patchPath}
+                        readOnly
+                        placeholder="Select the patch file..."
+                      />
+                      <Button
+                        onClick={() =>
+                          handleSelectFile(setPatchPath, [
+                            { name: "xDelta3 Patch", extensions: PATCH_EXTENSIONS },
+                          ])
+                        }
+                      >
+                        Browse
+                      </Button>
+                    </div>
                   </div>
-                  <div className="flex gap-2">
-                    <Input
-                      value={exportPatchPath}
-                      readOnly
-                      placeholder="Save patch file as..."
-                    />
-                    <Button
-                      onClick={() =>
-                        handleSaveFile(setExportPatchPath, [
-                          { name: "xDelta3 Patch", extensions: [PATCH_EXTENSIONS[0]] },
-                        ])
-                      }
-                    >
-                      Browse
-                    </Button>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="output-file">Save Patched File As</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        id="output-file"
+                        value={outputPath}
+                        readOnly
+                        placeholder="Choose where to save the patched file..."
+                      />
+                      <Button
+                        onClick={() => handleSaveFile(setOutputPath, [])}
+                      >
+                        Browse
+                      </Button>
+                    </div>
                   </div>
-                  <div className="flex flex-col gap-2">
-                    <Button
-                      onClick={handleCreatePatch}
-                      disabled={!sourcePath || !modifiedPath || !exportPatchPath || isCreatingPatch}
-                    >
-                      {isCreatingPatch ? "Creating Patch..." : "Create Patch"}
-                    </Button>
-                    <p className="text-xs text-muted-foreground text-center">
-                      The patch will contain only the differences between files. Users will need their own copy of the original file to apply the patch.
+
+                  <Button
+                    className="w-full"
+                    onClick={handleApplyPatch}
+                    disabled={!originalPath || !patchPath || !outputPath || isApplyingPatch}
+                  >
+                    {isApplyingPatch ? "Applying Patch..." : "Apply Patch"}
+                  </Button>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="author">
+              <Card className="min-h-[400px]">
+                <CardHeader>
+                  <CardTitle>Create Binary Patch</CardTitle>
+                  <CardDescription>
+                    Create an xdelta3 patch by comparing original and modified files
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  <div className="rounded-lg border p-4">
+                    <h3 className="font-medium mb-2">Create Patch</h3>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      Select the original and modified files to generate a patch that can transform one into the other.
                     </p>
+                    <div className="space-y-4">
+                      <div className="flex gap-2">
+                        <Input
+                          value={sourcePath}
+                          readOnly
+                          placeholder="Select original file..."
+                        />
+                        <Button
+                          onClick={() => handleSelectFile(setSourcePath)}
+                        >
+                          Browse
+                        </Button>
+                      </div>
+                      <div className="flex gap-2">
+                        <Input
+                          value={modifiedPath}
+                          readOnly
+                          placeholder="Select modified file..."
+                        />
+                        <Button
+                          onClick={() => handleSelectFile(setModifiedPath)}
+                        >
+                          Browse
+                        </Button>
+                      </div>
+                      <div className="flex gap-2">
+                        <Input
+                          value={exportPatchPath}
+                          readOnly
+                          placeholder="Save patch file as..."
+                        />
+                        <Button
+                          onClick={() =>
+                            handleSaveFile(setExportPatchPath, [
+                              { name: "xDelta3 Patch", extensions: [PATCH_EXTENSIONS[0]] },
+                            ])
+                          }
+                        >
+                          Browse
+                        </Button>
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <Button
+                          onClick={handleCreatePatch}
+                          disabled={!sourcePath || !modifiedPath || !exportPatchPath || isCreatingPatch}
+                        >
+                          {isCreatingPatch ? "Creating Patch..." : "Create Patch"}
+                        </Button>
+                        <p className="text-xs text-muted-foreground text-center">
+                          The patch will contain only the differences between files. Users will need their own copy of the original file to apply the patch.
+                        </p>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
+        </div>
+      </main>
     </div>
   )
 }
