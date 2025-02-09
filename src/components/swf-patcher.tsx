@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { open, save } from "@tauri-apps/plugin-dialog"
 import { Window, PhysicalSize } from "@tauri-apps/api/window"
@@ -49,12 +49,6 @@ export function SwfPatcher() {
   // Mod author states
   const [sourceSwfPath, setSourceSwfPath] = useState("")
   const [exportJsonPath, setExportJsonPath] = useState("")
-
-  // Add current tab state
-  const [currentTab, setCurrentTab] = useState("user")
-
-  const contentRef = useRef<HTMLDivElement>(null)
-  const resizeTimeout = useRef<NodeJS.Timeout | undefined>(undefined)
 
   // Remove all resize effects and just do initial window setup
   useEffect(() => {
@@ -321,7 +315,7 @@ export function SwfPatcher() {
 
       <main className="flex-1 overflow-auto">
         <div className="w-[600px] mx-auto px-4 py-8">
-          <Tabs defaultValue="batch" onValueChange={setCurrentTab}>
+          <Tabs defaultValue="batch">
             <TabsList className="grid grid-cols-3 mb-4">
               <TabsTrigger value="user">Patch Single File</TabsTrigger>
               <TabsTrigger value="batch">Patch Multiple Files</TabsTrigger>
