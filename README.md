@@ -185,13 +185,35 @@ The batch configuration file (`configuration.json`) is a JSON file that describe
 
 This file is not required for individual patching. However, if you are patching multiple SWF files, you are encouraged to provide it.
 
+The `ba2` field is optional and used to patch a BA2 archive. If provided, the `files` field is required and must be an array of objects with `path` and `config` fields. The `path` field is the path to the SWF file to patch (within the BA2 archive), and the `config` field is the path to the patch file (relative to the configuration file).
+
 ```json
 {
   "mods": [
     {
+      "ba2": true,
+      "name": "Starfield - Interface.ba2",
+      "files": [
+        {
+            "path": "interface/datamenu.swf",
+            "config": "patches/data-menu.json"
+        },
+        {
+            "path": "interface/shipcrewmenu.swf",
+            "config": "patches/shipcrew-menu.json"
+        },
+
+        {
+            "path": "interface/skillsmenu.swf",
+            "config": "patches/skills-menu.json"
+        }
+      ]
+    },
+    {
       "name": "Barter Menu (bartermenu.swf)",
       "config": "patches/barter-menu.json"
     },
+
     {
       "name": "Container Menu (containermenu.swf)",
       "config": "patches/container-menu.json"
