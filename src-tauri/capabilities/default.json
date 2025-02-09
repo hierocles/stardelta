@@ -20,6 +20,7 @@
     "core:window:allow-toggle-maximize",
     "decorum:allow-show-snap-overlay",
     "core:window:allow-set-min-size",
+    "core:window:allow-set-max-size",
     "core:window:allow-set-content-protected"
   ]
 }

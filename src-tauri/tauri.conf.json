@@ -14,9 +14,10 @@
     ]
   },
   "productName": "StarDelta",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "identifier": "com.stardelta.app",
-  "plugins": {},
+  "plugins": {
+  },
   "app": {
     "withGlobalTauri": true,
     "security": {
@@ -28,9 +29,10 @@
         "title": "StarDelta",
         "fullscreen": false,
         "resizable": true,
-        "width": 600,
-        "height": 750,
-        "center": true
+        "width": 1200,
+        "height": 1000,
+        "center": true,
+        "focus": true
       }
     ]
   }

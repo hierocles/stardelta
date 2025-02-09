@@ -1,6 +1,6 @@
 [package]
 name = "stardelta"
-version = "2.1.0"
+version = "2.1.1"
 description = "Delta patcher for Starfield UIs"
 authors = ["Dylan Henrich"]
 edition = "2021"
@@ -34,6 +34,7 @@ kurbo = "0.11.1"  # For path operations
 svgtypes = "0.15.3"  # For SVG parsing
 xmlparser = "0.13.5"  # XML parsing for SVG
 swf-fixed = "0.1.5"
+ba2 = "3.0.1"
 
 [features]
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!

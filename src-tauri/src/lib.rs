@@ -2,6 +2,7 @@
 
 mod swf;
 mod xdelta;
+mod ba2;
 
 use tauri::Manager;
 use tauri_plugin_decorum::WebviewWindowExt;
