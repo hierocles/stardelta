@@ -17,7 +17,7 @@ StarDelta is a tool for creating and applying patches to Starfield UIs. It inclu
 1. Select the original file to patch
 2. Select the delta file to apply
 3. Select the output directory
-4. Click "Patch"
+4. Click "Patch File"
 
 ### SWF Patching
 
@@ -28,14 +28,14 @@ You can patch SWF files either individually or in batch.
 1. Select the original SWF file
 2. Select the JSON patch file
 3. Select the output directory (typically "Interface")
-4. Click "Patch"
+4. Click "Patch File"
 
 #### Batch Patching
 
 1. Select the JSON configuration file
 2. Select the original SWF files to patch
 3. Select the output directory (typically "Interface")
-4. Click "Patch"
+4. Click "Patch Files"
 
 #### Installing Patched Files
 
@@ -50,9 +50,9 @@ The patch file must include the `swf` section, while `transparent` and `file` op
 
 ```json
 {
-  "transparent": [],  // Optional: Can be omitted if not making shapes transparent
-  "file": [],        // Optional: Can be omitted if not replacing shapes with SVG files
-  "swf": {           // Required: Must be present even if modifications array is empty
+  "transparent": [],
+  "file": [],
+  "swf": {
     "modifications": []
   }
 }
@@ -64,7 +64,7 @@ The transparent operation is optional and used to make specific shapes transpare
 
 ```json
 {
-  "transparent": [138, 139, 140],  // Array of shape IDs to make transparent
+  "transparent": [138, 139, 140],
   "swf": {
     "modifications": []
   }
@@ -81,8 +81,8 @@ Note: Only SVG files are supported for the source. SVG files should be placed in
 {
   "file": [
     {
-      "source": "new_shapes.svg",  // Path relative to the JSON patch file
-      "shapes": [1, 3, 6, 8]       // Shape IDs to replace
+      "source": "new_shape.svg",
+      "shapes": [1, 3, 6, 8]
     }
   ],
   "swf": {
