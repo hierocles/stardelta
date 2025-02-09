@@ -30,62 +30,19 @@ export function XdeltaPatcher() {
   const [modifiedPath, setModifiedPath] = useState("")
   const [exportPatchPath, setExportPatchPath] = useState("")
 
-  const contentRef = useRef<HTMLDivElement>(null)
-  const resizeTimeout = useRef<NodeJS.Timeout | undefined>(undefined)
-
-  // Add effect to handle form input changes
-  useEffect(() => {
-    if (!contentRef.current) return;
-    const rect = contentRef.current.getBoundingClientRect();
-    const window = Window.getCurrent();
-    window.setSize(new PhysicalSize(600, Math.max(600, rect.height + 180)));
-  }, [originalPath, patchPath, outputPath, sourcePath, modifiedPath, exportPatchPath]);
-
-  // Initial window setup
+  // Remove all resize effects and just do initial window setup
   useEffect(() => {
     const setupWindow = async () => {
       try {
         const window = Window.getCurrent();
-        await window.setMinSize(new PhysicalSize(600, 600));
-        await window.setContentProtected(false);
-        await window.setSize(new PhysicalSize(600, 600));
+        await window.setSize(new PhysicalSize(1200, 1000));
+        await window.setMinSize(new PhysicalSize(1200, 1000));
+        await window.setMaxSize(new PhysicalSize(1200, 1000));
       } catch (err) {
         console.error("Failed to configure window:", err);
       }
     };
     setupWindow();
-  }, []);
-
-  // Smooth resize effect for content changes
-  useEffect(() => {
-    if (!contentRef.current) return;
-
-    const updateWindowSize = async (rect: DOMRect) => {
-      try {
-        const window = Window.getCurrent();
-        const newHeight = Math.max(600, rect.height + 180);
-        await window.setSize(new PhysicalSize(600, newHeight));
-      } catch (err) {
-        console.error("Failed to update window size:", err);
-      }
-    };
-
-    const resizeObserver = new ResizeObserver((entries) => {
-      if (resizeTimeout.current) {
-        clearTimeout(resizeTimeout.current);
-      }
-      resizeTimeout.current = setTimeout(() => {
-        updateWindowSize(entries[0].target.getBoundingClientRect());
-      }, 100);
-    });
-
-    resizeObserver.observe(contentRef.current);
-    return () => {
-      resizeObserver.disconnect();
-      if (resizeTimeout.current) {
-        clearTimeout(resizeTimeout.current);
-      }
-    };
   }, []);
 
   const handleSelectFile = async (
@@ -189,8 +146,8 @@ export function XdeltaPatcher() {
   }
 
   return (
-    <div className="flex flex-col min-h-screen overflow-hidden">
-      <header className="sticky top-10 z-50">
+    <div className="flex flex-col h-screen">
+      <header className="sticky top-5 z-50">
         <div className="w-[600px] mx-auto relative px-4">
           <NavLink
             to="/"
@@ -216,15 +173,12 @@ export function XdeltaPatcher() {
 
           <div className="py-8">
             <Logo />
-            <p className="text-lg text-center text-muted-foreground mt-2">
-              Binary Patcher
-            </p>
           </div>
         </div>
       </header>
 
-      <main className="flex-1 py-8">
-        <div className="w-[600px] mx-auto px-4 overflow-hidden" ref={contentRef}>
+      <main className="flex-1 overflow-auto">
+        <div className="w-[600px] mx-auto px-4 py-8">
           <Tabs defaultValue="user">
             <TabsList className="grid grid-cols-2 mb-4">
               <TabsTrigger value="user">Apply Patch</TabsTrigger>

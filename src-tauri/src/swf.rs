@@ -13,6 +13,7 @@ use swf_types::{
 };
 use tauri::{command, AppHandle};
 use xmlparser::{Token, Tokenizer};
+use crate::ba2::{Ba2Path, extract_file_from_ba2, is_ba2_path};
 
 #[derive(Debug, Deserialize)]
 pub struct ModificationConfig {
@@ -25,12 +26,26 @@ pub struct ModificationConfig {
 pub struct BatchProcessConfig {
     pub config_file: String,           // Path to the main configuration file
     pub output_directory: String,      // Directory to save processed files
-    pub swf_mappings: Vec<SwfMapping>, // User-selected SWF file mappings
+    pub ba2_path: Option<String>,      // User-selected BA2 file path (if using BA2)
 }
 
 #[derive(Debug, Deserialize)]
 pub struct BatchConfiguration {
     pub mods: Vec<ModConfig>,          // List of modification configurations
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ModConfig {
+    pub ba2: Option<bool>,             // Whether this mod uses a BA2 archive
+    pub name: String,                  // Name of the BA2 file or mod name
+    pub files: Option<Vec<FileConfig>>, // Files within the BA2 to process
+    pub config: Option<String>,        // Legacy: Path to the modification config (relative to config file)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FileConfig {
+    pub path: String,                  // Path to the file (within BA2 if ba2=true)
+    pub config: String,                // Path to the modification config
 }
 
 #[derive(Debug, Deserialize)]
@@ -64,16 +79,16 @@ struct TagModification {
     properties: serde_json::Value,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct ModConfig {
-    pub name: String,                  // Name of the mod (for display)
-    pub config: String,                // Path to the modification config (relative to config file)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SwfMapping {
-    pub mod_name: String,              // Name of the mod to apply
-    pub swf_path: String,              // User-selected path to the SWF file
+fn read_swf_file(path: &str) -> Result<Vec<u8>, String> {
+    if is_ba2_path(path) {
+        if let Some(ba2_path) = Ba2Path::from_string(path) {
+            extract_file_from_ba2(&ba2_path)
+        } else {
+            Err("Invalid BA2 path format".to_string())
+        }
+    } else {
+        fs::read(path).map_err(|e| format!("Failed to read SWF file: {}", e))
+    }
 }
 
 #[command]
@@ -82,32 +97,11 @@ pub fn convert_swf_to_json(
     swf_path: String,
     json_path: String,
 ) -> Result<(), String> {
-    log::trace!("Converting SWF to JSON: {} -> {}", swf_path, json_path);
-
-    // Read SWF file
-    let swf_data = fs::read(&swf_path).map_err(|e| {
-        log::error!("Failed to read SWF file '{}': {}", swf_path, e);
-        format!("Failed to read SWF file '{}': {}", swf_path, e)
-    })?;
-
-    // Parse SWF to Movie
-    let movie = parse_swf(&swf_data).map_err(|e| {
-        log::error!("Failed to parse SWF file '{}': {}", swf_path, e);
-        format!("Failed to parse SWF file '{}': {}", swf_path, e)
-    })?;
-
-    // Serialize to JSON
-    let json = serde_json::to_string_pretty(&movie).map_err(|e| {
-        log::error!("Failed to convert SWF to JSON for '{}': {}", swf_path, e);
-        format!("Failed to convert SWF to JSON for '{}': {}", swf_path, e)
-    })?;
-
-    // Write JSON file
-    fs::write(&json_path, json).map_err(|e| {
-        log::error!("Failed to write JSON file '{}': {}", json_path, e);
-        format!("Failed to write JSON file '{}': {}", json_path, e)
-    })?;
-
+    let swf_data = read_swf_file(&swf_path)?;
+    let movie = parse_swf(&swf_data).map_err(|e| format!("Failed to parse SWF: {}", e))?;
+    let json = serde_json::to_string_pretty(&movie)
+        .map_err(|e| format!("Failed to convert to JSON: {}", e))?;
+    fs::write(json_path, json).map_err(|e| format!("Failed to write JSON file: {}", e))?;
     Ok(())
 }
 
@@ -959,54 +953,123 @@ pub fn batch_process_swf(
         .parent()
         .ok_or_else(|| "Could not determine config file directory".to_string())?;
 
-    // Process each SWF file according to the user's mappings
-    for mapping in config.swf_mappings {
-        // Find the corresponding mod config
-        let mod_config = batch_config.mods.iter()
-            .find(|m| m.name == mapping.mod_name)
-            .ok_or_else(|| format!("Could not find mod configuration for '{}'", mapping.mod_name))?;
+    // Process each mod configuration
+    for mod_config in &batch_config.mods {
+        // Handle BA2 archives
+        if mod_config.ba2 == Some(true) {
+            // Get the BA2 path from user selection or config
+            let ba2_path = config.ba2_path.as_ref()
+                .ok_or_else(|| "BA2 path not provided for BA2 mod".to_string())?;
 
-        let config_path = config_dir.join(&mod_config.config);
-        println!("Processing SWF file: {} with config: {}", mapping.swf_path, config_path.display());
+            // Process each file in the BA2
+            if let Some(files) = &mod_config.files {
+                for file_config in files {
+                    // Construct the full BA2 path (ba2_path//internal/path)
+                    let full_path = format!("{}//{}",
+                        ba2_path,
+                        file_config.path.trim_start_matches("//")
+                    );
 
-        // Generate output paths
-        let file_name = Path::new(&mapping.swf_path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .ok_or_else(|| format!("Invalid SWF file path: {}", mapping.swf_path))?;
-        let temp_json_path = format!("{}.temp.json", mapping.swf_path);
-        let output_path = PathBuf::from(&config.output_directory)
-            .join(file_name);
+                    // Get the file name for output
+                    let file_name = Path::new(&file_config.path)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .ok_or_else(|| format!("Invalid file path in BA2: {}", file_config.path))?;
 
-        // Convert SWF to JSON
-        convert_swf_to_json(_handle.clone(), mapping.swf_path.clone(), temp_json_path.clone())?;
+                    // Setup paths
+                    let temp_json_path = PathBuf::from(&config.output_directory)
+                        .join(format!("{}.temp.json", file_name));
+                    let output_path = PathBuf::from(&config.output_directory)
+                        .join(file_name);
+                    let config_path = config_dir.join(&file_config.config);
 
-        // Apply modifications using this file's specific config
-        apply_json_modifications(
-            _handle.clone(),
-            temp_json_path.clone(),
-            config_path.to_string_lossy().to_string(),
-            temp_json_path.clone(),
-        )?;
+                    println!("Processing BA2 file: {} with config: {}", full_path, config_path.display());
 
-        // Convert back to SWF
-        convert_json_to_swf(
-            _handle.clone(),
-            temp_json_path.clone(),
-            output_path.to_string_lossy().to_string(),
-        )?;
+                    // Process the file
+                    process_single_file(
+                        _handle.clone(),
+                        &full_path,
+                        &temp_json_path,
+                        &output_path,
+                        &config_path,
+                    )?;
 
-        // Clean up temporary JSON file
-        if let Err(e) = fs::remove_file(&temp_json_path) {
-            println!("Warning: Failed to clean up temporary file '{}': {}", temp_json_path, e);
+                    processed_files.push(output_path.to_string_lossy().to_string());
+                }
+            }
+        } else {
+            // Legacy non-BA2 handling - single file with config
+            if let Some(config_path) = &mod_config.config {
+                // For non-BA2 mods, the name field contains the target SWF file name
+                let swf_path = mod_config.name.clone();
+                let file_name = Path::new(&swf_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .ok_or_else(|| format!("Invalid SWF file path: {}", swf_path))?;
+
+                // Setup paths
+                let temp_json_path = PathBuf::from(&config.output_directory)
+                    .join(format!("{}.temp.json", file_name));
+                let output_path = PathBuf::from(&config.output_directory)
+                    .join(file_name);
+                let config_path = config_dir.join(config_path);
+
+                println!("Processing file: {} with config: {}", swf_path, config_path.display());
+
+                // Process the file
+                process_single_file(
+                    _handle.clone(),
+                    &swf_path,
+                    &temp_json_path,
+                    &output_path,
+                    &config_path,
+                )?;
+
+                processed_files.push(output_path.to_string_lossy().to_string());
+            }
         }
-
-        // Add to processed files list
-        processed_files.push(output_path.to_string_lossy().to_string());
     }
 
     println!("Batch processing completed successfully");
     Ok(processed_files)
+}
+
+// Helper function to process a single file (used by both BA2 and non-BA2 paths)
+fn process_single_file(
+    handle: AppHandle,
+    input_path: &str,
+    temp_json_path: &Path,
+    output_path: &Path,
+    config_path: &Path,
+) -> Result<(), String> {
+    // Convert SWF to JSON
+    convert_swf_to_json(
+        handle.clone(),
+        input_path.to_string(),
+        temp_json_path.to_string_lossy().to_string(),
+    )?;
+
+    // Apply modifications
+    apply_json_modifications(
+        handle.clone(),
+        temp_json_path.to_string_lossy().to_string(),
+        config_path.to_string_lossy().to_string(),
+        temp_json_path.to_string_lossy().to_string(),
+    )?;
+
+    // Convert back to SWF
+    convert_json_to_swf(
+        handle.clone(),
+        temp_json_path.to_string_lossy().to_string(),
+        output_path.to_string_lossy().to_string(),
+    )?;
+
+    // Clean up temporary JSON file
+    if let Err(e) = fs::remove_file(temp_json_path) {
+        println!("Warning: Failed to clean up temporary file '{}': {}", temp_json_path.display(), e);
+    }
+
+    Ok(())
 }
 
 #[command]

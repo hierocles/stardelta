@@ -16,8 +16,18 @@ import { toast } from "sonner"
 const MAX_FILE_SIZE = 100 * 1024 * 1024 // 100MB
 
 interface ModConfig {
+  ba2?: boolean;
   name: string;
-  config: string;
+  config?: string;
+  files?: Array<{
+    path: string;
+    config: string;
+  }>;
+}
+
+interface SwfMapping {
+  mod_name: string;
+  swf_path: string;
 }
 
 export function SwfPatcher() {
@@ -33,7 +43,8 @@ export function SwfPatcher() {
   const [batchOutputDir, setBatchOutputDir] = useState("")
   const [isBatchProcessing, setIsBatchProcessing] = useState(false)
   const [modConfigs, setModConfigs] = useState<ModConfig[]>([])
-  const [swfMappings, setSwfMappings] = useState<Array<{ mod_name: string, swf_path: string }>>([])
+  const [selectedBa2Path, setSelectedBa2Path] = useState<string>("")
+  const [swfMappings, setSwfMappings] = useState<SwfMapping[]>([])
 
   // Mod author states
   const [sourceSwfPath, setSourceSwfPath] = useState("")
@@ -45,78 +56,20 @@ export function SwfPatcher() {
   const contentRef = useRef<HTMLDivElement>(null)
   const resizeTimeout = useRef<NodeJS.Timeout | undefined>(undefined)
 
-  // Add effect to handle form input changes
-  useEffect(() => {
-    if (!contentRef.current) return;
-    const rect = contentRef.current.getBoundingClientRect();
-    const window = Window.getCurrent();
-    window.setSize(new PhysicalSize(600, Math.max(600, rect.height + 180)));
-  }, [originalSwfPath, modJsonPath, outputPath, batchConfigPath, batchOutputDir, sourceSwfPath, exportJsonPath, modConfigs.length]);
-
-
-  // Initial window setup
+  // Remove all resize effects and just do initial window setup
   useEffect(() => {
     const setupWindow = async () => {
       try {
         const window = Window.getCurrent();
-        await window.setMinSize(new PhysicalSize(600, 600));
-        await window.setContentProtected(false);
-        await window.setSize(new PhysicalSize(600, 600));
+        await window.setSize(new PhysicalSize(1200, 1000));
+        await window.setMinSize(new PhysicalSize(1200, 1000));
+        await window.setMaxSize(new PhysicalSize(1200, 1000));
       } catch (err) {
         console.error("Failed to configure window:", err);
       }
     };
     setupWindow();
   }, []);
-
-  // Smooth resize effect for content changes
-  useEffect(() => {
-    if (!contentRef.current) return;
-
-    const updateWindowSize = async (rect: DOMRect) => {
-      try {
-        const window = Window.getCurrent();
-        const newHeight = Math.max(600, rect.height + 180);
-        await window.setSize(new PhysicalSize(600, newHeight));
-
-
-      } catch (err) {
-        console.error("Failed to update window size:", err);
-      }
-    };
-
-    const resizeObserver = new ResizeObserver((entries) => {
-      if (resizeTimeout.current) {
-        clearTimeout(resizeTimeout.current);
-      }
-      resizeTimeout.current = setTimeout(() => {
-        updateWindowSize(entries[0].target.getBoundingClientRect());
-      }, 100);
-    });
-
-    resizeObserver.observe(contentRef.current);
-    return () => {
-      resizeObserver.disconnect();
-      if (resizeTimeout.current) {
-        clearTimeout(resizeTimeout.current);
-      }
-    };
-  }, []);
-
-  // Handle tab changes
-  useEffect(() => {
-    // Wait for the tab content to render
-    const timeout = setTimeout(async () => {
-      if (contentRef.current) {
-        const rect = contentRef.current.getBoundingClientRect();
-        const window = await Window.getCurrent();
-        await window.setSize(new PhysicalSize(600, Math.max(600, rect.height + 180)));
-      }
-    }, 100); // Increased timeout to match other resize operations
-
-
-    return () => clearTimeout(timeout);
-  }, [currentTab]);
 
   const handleSelectFile = async (
     setter: (path: string) => void,
@@ -246,60 +199,97 @@ export function SwfPatcher() {
 
   const handleLoadBatchConfig = async (path: string) => {
     try {
-      const configJson = await invoke<string>("read_file_to_string", { path })
-      const config = JSON.parse(configJson)
-      setModConfigs(config.mods)
-      setSwfMappings(config.mods.map((mod: ModConfig) => ({ mod_name: mod.name, swf_path: "" })))
-    } catch (err) {
-      console.error("Error loading batch config:", err)
-      toast.error("Failed to load configuration file")
+      const configJson = await invoke("read_file_to_string", { path })
+      const config = JSON.parse(configJson as string)
+      setModConfigs(config.mods || [])
+
+      // Clear previous mappings when loading new config
+      setSwfMappings([])
+      setSelectedBa2Path("")
+    } catch (error) {
+      console.error("Failed to load batch config:", error)
+      toast.error("Failed to load batch configuration")
     }
   }
 
   const handleSelectBatchConfig = async () => {
-    await handleSelectFile(async (path) => {
-      setBatchConfigPath(path)
-      await handleLoadBatchConfig(path)
-    }, [{ name: "JSON Files", extensions: ["json"] }])
+    const selected = await open({
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    })
+    if (selected) {
+      setBatchConfigPath(selected)
+      await handleLoadBatchConfig(selected)
+    }
+  }
+
+  const handleSelectBa2 = async () => {
+    const selected = await open({
+      filters: [{ name: "BA2 Archive", extensions: ["ba2"] }],
+    })
+    if (selected) {
+      setSelectedBa2Path(selected)
+    }
   }
 
   const handleSetSwfPath = async (modName: string) => {
-    await handleSelectFile((path) => {
-      setSwfMappings(prev => prev.map(mapping =>
-        mapping.mod_name === modName ? { ...mapping, swf_path: path } : mapping
-      ))
-    }, [{ name: "SWF Files", extensions: ["swf"] }])
+    const selected = await open({
+      filters: [{ name: "SWF", extensions: ["swf"] }],
+    })
+    if (selected) {
+      setSwfMappings(prev => [
+        ...prev.filter(m => m.mod_name !== modName),
+        { mod_name: modName, swf_path: selected }
+      ])
+    }
   }
 
   const handleBatchProcess = async () => {
+    if (!batchConfigPath || !batchOutputDir) {
+      toast.error("Please select a configuration file and output directory")
+      return
+    }
+
+    // For BA2 mods, check if BA2 file is selected
+    const hasBa2Mods = modConfigs.some(mod => mod.ba2)
+    if (hasBa2Mods && !selectedBa2Path) {
+      toast.error("Please select the BA2 archive")
+      return
+    }
+
+    // For non-BA2 mods, check if all SWFs are mapped
+    const nonBa2Mods = modConfigs.filter(mod => !mod.ba2)
+    const allMapped = nonBa2Mods.every(mod =>
+      swfMappings.some(mapping => mapping.mod_name === mod.name)
+    )
+    if (nonBa2Mods.length > 0 && !allMapped) {
+      toast.error("Please select SWF files for all non-BA2 mods")
+      return
+    }
+
     try {
-      if (!batchConfigPath) throw new Error("Please select the batch configuration file")
-      if (!batchOutputDir) throw new Error("Please specify where to save the processed files")
-      if (swfMappings.some(m => !m.swf_path)) throw new Error("Please select SWF files for all mods")
-
       setIsBatchProcessing(true)
-      toast.loading("Processing SWF files...", { id: "batch-process" })
 
-      const processedFiles = await invoke<string[]>("batch_process_swf", {
+      const result = await invoke("batch_process_swf", {
         config: {
           config_file: batchConfigPath,
           output_directory: batchOutputDir,
-          swf_mappings: swfMappings,
+          ba2_path: selectedBa2Path || undefined,
         }
       })
 
-      toast.success(`Successfully processed ${processedFiles.length} files!`, { id: "batch-process" })
-    } catch (err) {
-      console.error("Error in batch processing:", err)
-      toast.error(err instanceof Error ? err.message : "Failed to process files", { id: "batch-process" })
+      toast.success("Batch processing completed successfully")
+      console.log("Processed files:", result)
+    } catch (error) {
+      console.error("Batch processing failed:", error)
+      toast.error("Batch processing failed")
     } finally {
       setIsBatchProcessing(false)
     }
   }
 
   return (
-    <div className="flex flex-col min-h-screen overflow-hidden">
-      <header className="sticky top-10 z-50">
+    <div className="flex flex-col h-screen">
+      <header className="sticky top-5 z-50">
         <div className="w-[600px] mx-auto relative px-4">
           <NavLink
             to="/"
@@ -329,22 +319,21 @@ export function SwfPatcher() {
         </div>
       </header>
 
-      <main className="flex-1 py-8">
-        <div className="w-[600px] mx-auto px-4 overflow-hidden" ref={contentRef}>
+      <main className="flex-1 overflow-auto">
+        <div className="w-[600px] mx-auto px-4 py-8">
           <Tabs defaultValue="batch" onValueChange={setCurrentTab}>
             <TabsList className="grid grid-cols-3 mb-4">
-              <TabsTrigger value="user">Install Mod</TabsTrigger>
-              <TabsTrigger value="batch">Batch Process</TabsTrigger>
-              <TabsTrigger value="author">Create Mod</TabsTrigger>
+              <TabsTrigger value="user">Patch Single File</TabsTrigger>
+              <TabsTrigger value="batch">Patch Multiple Files</TabsTrigger>
+              <TabsTrigger value="author">Mod Author Tools</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="user">
+            <TabsContent value="user" className="space-y-4">
               <Card className="min-h-[400px]">
                 <CardHeader>
-                  <CardTitle>Install SWF Mod</CardTitle>
-
+                  <CardTitle>Install SWF Patch</CardTitle>
                   <CardDescription>
-                    Apply a mod to your SWF file using the modification files provided by the mod author
+                    Apply a patch to your SWF file using the modification files provided by the mod author
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -370,13 +359,13 @@ export function SwfPatcher() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="mod-json">Mod Files</Label>
+                    <Label htmlFor="mod-json">Patch Files</Label>
                     <div className="flex gap-2">
                       <Input
                         id="mod-json"
                         value={modJsonPath}
                         readOnly
-                        placeholder="Select the mod's JSON file..."
+                        placeholder="Select the patch's JSON file..."
                       />
                       <Button
                         onClick={() =>
@@ -419,81 +408,43 @@ export function SwfPatcher() {
                     onClick={handleApplyMod}
                     disabled={!originalSwfPath || !modJsonPath || !outputPath || isApplyingMod}
                   >
-                    {isApplyingMod ? "Applying Mod..." : "Apply Mod"}
+                    {isApplyingMod ? "Patching..." : "Patch File"}
                   </Button>
                 </CardContent>
               </Card>
             </TabsContent>
 
-            <TabsContent value="batch">
-              <Card className="min-h-[400px]">
+            <TabsContent value="batch" className="space-y-4">
+              <Card>
                 <CardHeader>
                   <CardTitle>Batch Process SWF Files</CardTitle>
                   <CardDescription>
-                    Process multiple SWF files using a batch configuration file
+                    Process multiple SWF files using a batch configuration file.
+                    Supports both loose SWF files and files within BA2 archives.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="batch-config">Batch Configuration</Label>
+                    <Label>Configuration File</Label>
                     <div className="flex gap-2">
                       <Input
-                        id="batch-config"
                         value={batchConfigPath}
                         readOnly
-                        placeholder="Select the batch configuration file..."
+                        placeholder="Select batch configuration file..."
                       />
-                      <Button
-                        onClick={handleSelectBatchConfig}
-                        disabled={isBatchProcessing}
-                      >
+                      <Button onClick={handleSelectBatchConfig} disabled={isBatchProcessing}>
                         Browse
                       </Button>
                     </div>
-                    <p className="text-sm text-muted-foreground">
-                      Select the JSON configuration file that contains the mod configurations.
-                    </p>
                   </div>
 
-                  {modConfigs.length > 0 && (
-                    <div className="space-y-2">
-                      <Label>SWF File Mappings</Label>
-                      <div className="space-y-2">
-                        {swfMappings.map((mapping, index) => (
-                          <div key={index} className="flex items-start gap-2 p-2 border rounded-lg">
-                            <div className="flex-1 space-y-1">
-                              <p className="text-sm font-medium">
-                                {mapping.mod_name}
-                              </p>
-                              <div className="flex gap-2">
-                                <Input
-                                  value={mapping.swf_path ? mapping.swf_path.split('\\').pop() : ''}
-                                  readOnly
-                                  placeholder="Select SWF file..."
-                                  className="flex-1"
-                                />
-                                <Button
-                                  onClick={() => handleSetSwfPath(mapping.mod_name)}
-                                  disabled={isBatchProcessing}
-                                >
-                                  Browse
-                                </Button>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
                   <div className="space-y-2">
-                    <Label htmlFor="batch-output">Output Directory</Label>
+                    <Label>Output Directory</Label>
                     <div className="flex gap-2">
                       <Input
-                        id="batch-output"
                         value={batchOutputDir}
                         readOnly
-                        placeholder="Choose where to save processed files..."
+                        placeholder="Select where to save processed files..."
                       />
                       <Button
                         onClick={() => handleSelectDirectory(setBatchOutputDir)}
@@ -504,18 +455,59 @@ export function SwfPatcher() {
                     </div>
                   </div>
 
+                  {modConfigs.some(mod => mod.ba2) && (
+                    <div className="space-y-2">
+                      <Label>BA2 Archive</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          value={selectedBa2Path}
+                          readOnly
+                          placeholder="Select BA2 archive..."
+                        />
+                        <Button
+                          onClick={handleSelectBa2}
+                          disabled={isBatchProcessing}
+                        >
+                          Browse
+                        </Button>
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        Select the BA2 archive containing the SWF files to patch
+                      </p>
+                    </div>
+                  )}
+
+                  {modConfigs.filter(mod => !mod.ba2).map((mod, index) => (
+                    <div key={index} className="space-y-2">
+                      <Label>{mod.name}</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          value={swfMappings.find(m => m.mod_name === mod.name)?.swf_path || ""}
+                          readOnly
+                          placeholder="Select SWF file..."
+                        />
+                        <Button
+                          onClick={() => handleSetSwfPath(mod.name)}
+                          disabled={isBatchProcessing}
+                        >
+                          Browse
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+
                   <Button
                     className="w-full"
                     onClick={handleBatchProcess}
-                    disabled={!batchConfigPath || !batchOutputDir || swfMappings.some(m => !m.swf_path) || isBatchProcessing}
+                    disabled={isBatchProcessing}
                   >
-                    {isBatchProcessing ? "Processing Files..." : "Process Files"}
+                    {isBatchProcessing ? "Patching..." : "Patch Files"}
                   </Button>
                 </CardContent>
               </Card>
             </TabsContent>
 
-            <TabsContent value="author">
+            <TabsContent value="author" className="space-y-4">
               <Card className="min-h-[400px]">
                 <CardHeader>
                   <CardTitle>Create SWF Mod</CardTitle>
