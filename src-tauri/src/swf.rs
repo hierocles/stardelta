@@ -15,6 +15,8 @@ use tauri::{command, AppHandle};
 use xmlparser::{Token, Tokenizer};
 use crate::ba2::{Ba2Path, extract_file_from_ba2, is_ba2_path};
 
+const SWF_SCALE: f32 = 20.0;  // SWF uses 20 twips per pixel, whereas SVG uses 1px per pixel
+
 #[derive(Debug, Deserialize)]
 pub struct ModificationConfig {
     pub file: Option<Vec<ShapeSource>>,
@@ -204,8 +206,8 @@ fn apply_shape_replacements(movie: &mut Movie, sources: &[ShapeSource], config_p
 
 fn point_to_vec2d(from: Point, to: Point) -> swf_types::Vector2D {
     swf_types::Vector2D {
-        x: (to.x as f32 - from.x as f32) as i32,
-        y: (to.y as f32 - from.y as f32) as i32,
+        x: ((to.x * SWF_SCALE as f64) as i32 - (from.x * SWF_SCALE as f64) as i32),
+        y: ((to.y * SWF_SCALE as f64) as i32 - (from.y * SWF_SCALE as f64) as i32),
     }
 }
 
@@ -221,6 +223,7 @@ fn apply_transform(point: Point, transform: &Transform) -> Point {
 }
 
 fn parse_shape_source(path: &Path) -> Result<Vec<Shape>, String> {
+    println!("Starting to parse SVG file: {}", path.display());
     let svg_data = fs::read(path).map_err(|e| format!("Failed to read SVG file: {}", e))?;
 
     let mut shapes = Vec::new();
@@ -236,61 +239,71 @@ fn parse_shape_source(path: &Path) -> Result<Vec<Shape>, String> {
     let mut tokenizer = Tokenizer::from(xml.as_ref());
 
     let mut in_path = false;
-    let mut transform: Option<Transform> = None;
+    let mut group_transform: Option<Transform> = None;
+    let mut path_transform: Option<Transform> = None;
     let mut path_data: Option<String> = None;
     let mut fill_color: Option<Color> = None;
     let mut stroke_color: Option<Color> = None;
     let mut stroke_width = 1.0;
     let mut fill_opacity = 1.0;
     let mut stroke_opacity = 1.0;
+    let mut path_count = 0;
+    let mut current_fill_style_index = 0;
+    let mut current_line_style_index = 0;
 
+    println!("Starting XML parsing");
     while let Some(token) = tokenizer.next() {
         let token = token.map_err(|e| format!("Failed to parse SVG: {}", e))?;
         match token {
             Token::ElementStart { local, .. } => {
                 if local.as_str() == "path" {
+                    path_count += 1;
+                    println!("Found path #{}", path_count);
                     in_path = true;
-                    transform = None;
+                    path_transform = None;
                     path_data = None;
                     fill_color = None;
                     stroke_color = None;
                     stroke_width = 1.0;
                     fill_opacity = 1.0;
                     stroke_opacity = 1.0;
+                } else if local.as_str() == "g" {
+                    println!("Found group element");
                 }
             }
-            Token::Attribute { local, value, .. } if in_path => {
+            Token::Attribute { local, value, .. } => {
                 match local.as_str() {
-                    "d" => path_data = Some(value.to_string()),
                     "transform" => {
-                        transform = Transform::from_str(value.as_str())
-                            .map_err(|e| format!("Failed to parse transform: {}", e))
-                            .ok();
+                        println!("Found transform: {}", value.as_str());
+                        let transform = Transform::from_str(value.as_str()).ok();
+                        if in_path {
+                            path_transform = transform;
+                        } else {
+                            group_transform = transform;
+                        }
                     }
-                    "fill" => {
-                        fill_color = match value.as_str() {
-                            "none" => None,
-                            color_str => Color::from_str(color_str)
-                                .map_err(|e| format!("Failed to parse fill color: {}", e))
-                                .ok(),
-                        };
+                    "d" if in_path => {
+                        println!("Found path data");
+                        path_data = Some(value.as_str().to_string());
+                    }
+                    "fill" if in_path => {
+                        println!("Found fill color: {}", value.as_str());
+                        fill_color = Color::from_str(value.as_str()).ok();
+                    }
+                    "fill-opacity" => {
+                        if let Ok(n) = value.as_str().parse::<f32>() {
+                            fill_opacity = n;
+                        }
                     }
                     "stroke" => {
                         stroke_color = match value.as_str() {
                             "none" => None,
-                            color_str => Color::from_str(color_str)
-                                .map_err(|e| format!("Failed to parse stroke color: {}", e))
-                                .ok(),
+                            color_str => Color::from_str(color_str).ok(),
                         };
                     }
                     "stroke-width" => {
                         if let Ok(n) = value.as_str().parse::<f32>() {
                             stroke_width = n;
-                        }
-                    }
-                    "fill-opacity" => {
-                        if let Ok(n) = value.as_str().parse::<f32>() {
-                            fill_opacity = n;
                         }
                     }
                     "stroke-opacity" => {
@@ -306,141 +319,34 @@ fn parse_shape_source(path: &Path) -> Result<Vec<Shape>, String> {
 
                 // Process path data if available
                 if let Some(path_str) = path_data.take() {
+                    println!("Processing path with {} characters", path_str.len());
                     let mut current_pos = Point::new(0.0, 0.0);
                     let path_parser = PathParser::from(path_str.as_str());
 
-                    for segment in path_parser {
-                        let segment =
-                            segment.map_err(|e| format!("Failed to parse path: {}", e))?;
-                        match segment {
-                            PathSegment::MoveTo { abs, x, y } => {
-                                let point = if abs {
-                                    Point::new(x as f64, y as f64)
-                                } else {
-                                    Point::new(current_pos.x + x as f64, current_pos.y + y as f64)
-                                };
-                                let transformed_point = transform
-                                    .as_ref()
-                                    .map(|t| apply_transform(point, t))
-                                    .unwrap_or(point);
-                                current_shape.records.push(ShapeRecord::StyleChange(
-                                    shape_records::StyleChange {
-                                        move_to: Some(swf_types::Vector2D {
-                                            x: transformed_point.x as i32,
-                                            y: transformed_point.y as i32,
-                                        }),
-                                        left_fill: if fill_color.is_some() { Some(1) } else { None },
-                                        right_fill: None,
-                                        line_style: if stroke_color.is_some() { Some(1) } else { None },
-                                        new_styles: None,
-                                    },
-                                ));
-                                current_pos = transformed_point;
-                            }
-                            PathSegment::LineTo { abs, x, y } => {
-                                let point = if abs {
-                                    Point::new(x as f64, y as f64)
-                                } else {
-                                    Point::new(current_pos.x + x as f64, current_pos.y + y as f64)
-                                };
-                                let transformed_point = transform
-                                    .as_ref()
-                                    .map(|t| apply_transform(point, t))
-                                    .unwrap_or(point);
-                                current_shape.records.push(ShapeRecord::Edge(
-                                    shape_records::Edge {
-                                        delta: point_to_vec2d(current_pos, transformed_point),
-                                        control_delta: None,
-                                    },
-                                ));
-                                current_pos = transformed_point;
-                            }
-                            PathSegment::CurveTo {
-                                abs,
-                                x1,
-                                y1,
-                                x2,
-                                y2,
-                                x,
-                                y,
-                            } => {
-                                let control = if abs {
-                                    Point::new(((x1 + x2) / 2.0) as f64, ((y1 + y2) / 2.0) as f64)
-                                } else {
-                                    Point::new(
-                                        current_pos.x + ((x1 + x2) / 2.0) as f64,
-                                        current_pos.y + ((y1 + y2) / 2.0) as f64,
-                                    )
-                                };
-                                let end = if abs {
-                                    Point::new(x as f64, y as f64)
-                                } else {
-                                    Point::new(current_pos.x + x as f64, current_pos.y + y as f64)
-                                };
-                                let transformed_control = transform
-                                    .as_ref()
-                                    .map(|t| apply_transform(control, t))
-                                    .unwrap_or(control);
-                                let transformed_end = transform
-                                    .as_ref()
-                                    .map(|t| apply_transform(end, t))
-                                    .unwrap_or(end);
-                                current_shape.records.push(ShapeRecord::Edge(
-                                    shape_records::Edge {
-                                        delta: point_to_vec2d(current_pos, transformed_end),
-                                        control_delta: Some(point_to_vec2d(
-                                            current_pos,
-                                            transformed_control,
-                                        )),
-                                    },
-                                ));
-                                current_pos = transformed_end;
-                            }
-                            PathSegment::ClosePath { .. } => {
-                                let mut first_point = None;
-                                for record in &current_shape.records {
-                                    if let ShapeRecord::StyleChange(change) = record {
-                                        if let Some(pos) = &change.move_to {
-                                            first_point =
-                                                Some(Point::new(pos.x as f64, pos.y as f64));
-                                            break;
-                                        }
-                                    }
-                                }
-                                if let Some(start_pos) = first_point {
-                                    if (current_pos.x - start_pos.x).abs() > 1.0
-                                        || (current_pos.y - start_pos.y).abs() > 1.0
-                                    {
-                                        current_shape.records.push(ShapeRecord::Edge(
-                                            shape_records::Edge {
-                                                delta: point_to_vec2d(current_pos, start_pos),
-                                                control_delta: None,
-                                            },
-                                        ));
-                                    }
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
+                    // Add new styles if needed for this path
+                    let mut new_styles = ShapeStyles {
+                        fill: Vec::new(),
+                        line: Vec::new(),
+                    };
 
-                    // Add styles if specified
+                    // Add fill style if one is defined
                     if let Some(color) = fill_color {
-                        current_shape.initial_styles.fill.push(FillStyle::Solid(
-                            fill_styles::Solid {
-                                color: StraightSRgba8 {
-                                    r: color.red,
-                                    g: color.green,
-                                    b: color.blue,
-                                    a: opacity_to_alpha(fill_opacity),
-                                },
+                        current_fill_style_index += 1;
+                        new_styles.fill.push(FillStyle::Solid(fill_styles::Solid {
+                            color: StraightSRgba8 {
+                                r: color.red,
+                                g: color.green,
+                                b: color.blue,
+                                a: opacity_to_alpha(fill_opacity),
                             },
-                        ));
+                        }));
                     }
 
-                    if let Some(color) = stroke_color {
-                        current_shape.initial_styles.line.push(LineStyle {
-                            width: stroke_width as u16,
+                    // Add line style if stroke is defined
+                    if let Some(stroke) = stroke_color {
+                        current_line_style_index += 1;
+                        new_styles.line.push(LineStyle {
+                            width: (stroke_width * SWF_SCALE) as u16,
                             start_cap: CapStyle::Round,
                             end_cap: CapStyle::Round,
                             join: JoinStyle::Round,
@@ -450,27 +356,522 @@ fn parse_shape_source(path: &Path) -> Result<Vec<Shape>, String> {
                             pixel_hinting: false,
                             fill: FillStyle::Solid(fill_styles::Solid {
                                 color: StraightSRgba8 {
-                                    r: color.red,
-                                    g: color.green,
-                                    b: color.blue,
+                                    r: stroke.red,
+                                    g: stroke.green,
+                                    b: stroke.blue,
                                     a: opacity_to_alpha(stroke_opacity),
                                 },
                             }),
                         });
                     }
 
-                    shapes.push(current_shape);
-                    current_shape = Shape {
-                        initial_styles: ShapeStyles {
-                            fill: Vec::new(),
-                            line: Vec::new(),
-                        },
-                        records: Vec::new(),
-                    };
+                    // Only add the style change record if we have new styles
+                    if !new_styles.fill.is_empty() || !new_styles.line.is_empty() {
+                        current_shape.records.push(ShapeRecord::StyleChange(
+                            shape_records::StyleChange {
+                                move_to: None,
+                                left_fill: if !new_styles.fill.is_empty() { Some(current_fill_style_index) } else { None },
+                                right_fill: None,
+                                line_style: if !new_styles.line.is_empty() { Some(current_line_style_index) } else { None },
+                                new_styles: Some(new_styles),
+                            },
+                        ));
+                    }
+
+                    // Process path segments
+                    let mut last_control_point: Option<Point> = None;
+                    for segment in path_parser {
+                        let segment = segment.map_err(|e| format!("Failed to parse path: {}", e))?;
+                        match segment {
+                            PathSegment::MoveTo { abs, x, y } => {
+                                let point = if abs {
+                                    Point::new(x as f64, y as f64)
+                                } else {
+                                    Point::new(current_pos.x + x as f64, current_pos.y + y as f64)
+                                };
+
+                                let transformed_point = path_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(point, t))
+                                    .unwrap_or(point);
+                                let transformed_point = group_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(transformed_point, t))
+                                    .unwrap_or(transformed_point);
+
+                                current_shape.records.push(ShapeRecord::StyleChange(
+                                    shape_records::StyleChange {
+                                        move_to: Some(swf_types::Vector2D {
+                                            x: (transformed_point.x * SWF_SCALE as f64) as i32,
+                                            y: (transformed_point.y * SWF_SCALE as f64) as i32,
+                                        }),
+                                        right_fill: None,
+                                        left_fill: None,
+                                        line_style: None,
+                                        new_styles: None,
+                                    },
+                                ));
+
+                                current_pos = transformed_point;
+                                last_control_point = None;
+                            },
+                            PathSegment::LineTo { abs, x, y } => {
+                                let point = if abs {
+                                    Point::new(x as f64, y as f64)
+                                } else {
+                                    Point::new(current_pos.x + x as f64, current_pos.y + y as f64)
+                                };
+
+                                let transformed_point = path_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(point, t))
+                                    .unwrap_or(point);
+                                let transformed_point = group_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(transformed_point, t))
+                                    .unwrap_or(transformed_point);
+
+                                current_shape.records.push(ShapeRecord::Edge(
+                                    shape_records::Edge {
+                                        delta: point_to_vec2d(current_pos, transformed_point),
+                                        control_delta: None,
+                                    },
+                                ));
+
+                                current_pos = transformed_point;
+                                last_control_point = None;
+                            },
+                            PathSegment::HorizontalLineTo { abs, x } => {
+                                let point = if abs {
+                                    Point::new(x as f64, current_pos.y)
+                                } else {
+                                    Point::new(current_pos.x + x as f64, current_pos.y)
+                                };
+
+                                let transformed_point = path_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(point, t))
+                                    .unwrap_or(point);
+                                let transformed_point = group_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(transformed_point, t))
+                                    .unwrap_or(transformed_point);
+
+                                current_shape.records.push(ShapeRecord::Edge(
+                                    shape_records::Edge {
+                                        delta: point_to_vec2d(current_pos, transformed_point),
+                                        control_delta: None,
+                                    },
+                                ));
+
+                                current_pos = transformed_point;
+                                last_control_point = None;
+                            },
+                            PathSegment::VerticalLineTo { abs, y } => {
+                                let point = if abs {
+                                    Point::new(current_pos.x, y as f64)
+                                } else {
+                                    Point::new(current_pos.x, current_pos.y + y as f64)
+                                };
+
+                                let transformed_point = path_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(point, t))
+                                    .unwrap_or(point);
+                                let transformed_point = group_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(transformed_point, t))
+                                    .unwrap_or(transformed_point);
+
+                                current_shape.records.push(ShapeRecord::Edge(
+                                    shape_records::Edge {
+                                        delta: point_to_vec2d(current_pos, transformed_point),
+                                        control_delta: None,
+                                    },
+                                ));
+
+                                current_pos = transformed_point;
+                                last_control_point = None;
+                            },
+                            PathSegment::CurveTo { abs, x1, y1, x2, y2, x, y } => {
+                                let control1 = if abs {
+                                    Point::new(x1 as f64, y1 as f64)
+                                } else {
+                                    Point::new(current_pos.x + x1 as f64, current_pos.y + y1 as f64)
+                                };
+                                let control2 = if abs {
+                                    Point::new(x2 as f64, y2 as f64)
+                                } else {
+                                    Point::new(current_pos.x + x2 as f64, current_pos.y + y2 as f64)
+                                };
+                                let end = if abs {
+                                    Point::new(x as f64, y as f64)
+                                } else {
+                                    Point::new(current_pos.x + x as f64, current_pos.y + y as f64)
+                                };
+
+                                // Transform all points
+                                let transformed_control1 = path_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(control1, t))
+                                    .unwrap_or(control1);
+                                let transformed_control1 = group_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(transformed_control1, t))
+                                    .unwrap_or(transformed_control1);
+
+                                let transformed_control2 = path_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(control2, t))
+                                    .unwrap_or(control2);
+                                let transformed_control2 = group_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(transformed_control2, t))
+                                    .unwrap_or(transformed_control2);
+
+                                let transformed_end = path_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(end, t))
+                                    .unwrap_or(end);
+                                let transformed_end = group_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(transformed_end, t))
+                                    .unwrap_or(transformed_end);
+
+                                // Convert cubic to two quadratic curves
+                                let mid = Point::new(
+                                    (transformed_control1.x + transformed_control2.x) / 2.0,
+                                    (transformed_control1.y + transformed_control2.y) / 2.0
+                                );
+
+                                // First quadratic curve
+                                current_shape.records.push(ShapeRecord::Edge(
+                                    shape_records::Edge {
+                                        delta: point_to_vec2d(current_pos, mid),
+                                        control_delta: Some(point_to_vec2d(current_pos, transformed_control1)),
+                                    },
+                                ));
+
+                                // Second quadratic curve
+                                current_shape.records.push(ShapeRecord::Edge(
+                                    shape_records::Edge {
+                                        delta: point_to_vec2d(mid, transformed_end),
+                                        control_delta: Some(point_to_vec2d(mid, transformed_control2)),
+                                    },
+                                ));
+
+                                current_pos = transformed_end;
+                                last_control_point = Some(transformed_control2);
+                            },
+                            PathSegment::SmoothCurveTo { abs, x2, y2, x, y } => {
+                                let control1 = match last_control_point {
+                                    Some(last_ctrl) => Point::new(
+                                        2.0 * current_pos.x - last_ctrl.x,
+                                        2.0 * current_pos.y - last_ctrl.y
+                                    ),
+                                    None => current_pos
+                                };
+
+                                let control2 = if abs {
+                                    Point::new(x2 as f64, y2 as f64)
+                                } else {
+                                    Point::new(current_pos.x + x2 as f64, current_pos.y + y2 as f64)
+                                };
+                                let end = if abs {
+                                    Point::new(x as f64, y as f64)
+                                } else {
+                                    Point::new(current_pos.x + x as f64, current_pos.y + y as f64)
+                                };
+
+                                // Transform all points
+                                let transformed_control1 = path_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(control1, t))
+                                    .unwrap_or(control1);
+                                let transformed_control1 = group_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(transformed_control1, t))
+                                    .unwrap_or(transformed_control1);
+
+                                let transformed_control2 = path_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(control2, t))
+                                    .unwrap_or(control2);
+                                let transformed_control2 = group_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(transformed_control2, t))
+                                    .unwrap_or(transformed_control2);
+
+                                let transformed_end = path_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(end, t))
+                                    .unwrap_or(end);
+                                let transformed_end = group_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(transformed_end, t))
+                                    .unwrap_or(transformed_end);
+
+                                // Convert cubic to two quadratic curves
+                                let mid = Point::new(
+                                    (transformed_control1.x + transformed_control2.x) / 2.0,
+                                    (transformed_control1.y + transformed_control2.y) / 2.0
+                                );
+
+                                // First quadratic curve
+                                current_shape.records.push(ShapeRecord::Edge(
+                                    shape_records::Edge {
+                                        delta: point_to_vec2d(current_pos, mid),
+                                        control_delta: Some(point_to_vec2d(current_pos, transformed_control1)),
+                                    },
+                                ));
+
+                                // Second quadratic curve
+                                current_shape.records.push(ShapeRecord::Edge(
+                                    shape_records::Edge {
+                                        delta: point_to_vec2d(mid, transformed_end),
+                                        control_delta: Some(point_to_vec2d(mid, transformed_control2)),
+                                    },
+                                ));
+
+                                current_pos = transformed_end;
+                                last_control_point = Some(transformed_control2);
+                            },
+                            PathSegment::Quadratic { abs, x1, y1, x, y } => {
+                                let control = if abs {
+                                    Point::new(x1 as f64, y1 as f64)
+                                } else {
+                                    Point::new(current_pos.x + x1 as f64, current_pos.y + y1 as f64)
+                                };
+                                let end = if abs {
+                                    Point::new(x as f64, y as f64)
+                                } else {
+                                    Point::new(current_pos.x + x as f64, current_pos.y + y as f64)
+                                };
+
+                                // Transform points
+                                let transformed_control = path_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(control, t))
+                                    .unwrap_or(control);
+                                let transformed_control = group_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(transformed_control, t))
+                                    .unwrap_or(transformed_control);
+
+                                let transformed_end = path_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(end, t))
+                                    .unwrap_or(end);
+                                let transformed_end = group_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(transformed_end, t))
+                                    .unwrap_or(transformed_end);
+
+                                current_shape.records.push(ShapeRecord::Edge(
+                                    shape_records::Edge {
+                                        delta: point_to_vec2d(current_pos, transformed_end),
+                                        control_delta: Some(point_to_vec2d(current_pos, transformed_control)),
+                                    },
+                                ));
+
+                                current_pos = transformed_end;
+                                last_control_point = Some(transformed_control);
+                            },
+                            PathSegment::SmoothQuadratic { abs, x, y } => {
+                                let control = match last_control_point {
+                                    Some(last_ctrl) => Point::new(
+                                        2.0 * current_pos.x - last_ctrl.x,
+                                        2.0 * current_pos.y - last_ctrl.y
+                                    ),
+                                    None => current_pos
+                                };
+                                let end = if abs {
+                                    Point::new(x as f64, y as f64)
+                                } else {
+                                    Point::new(current_pos.x + x as f64, current_pos.y + y as f64)
+                                };
+
+                                // Transform points
+                                let transformed_control = path_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(control, t))
+                                    .unwrap_or(control);
+                                let transformed_control = group_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(transformed_control, t))
+                                    .unwrap_or(transformed_control);
+
+                                let transformed_end = path_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(end, t))
+                                    .unwrap_or(end);
+                                let transformed_end = group_transform
+                                    .as_ref()
+                                    .map(|t| apply_transform(transformed_end, t))
+                                    .unwrap_or(transformed_end);
+
+                                current_shape.records.push(ShapeRecord::Edge(
+                                    shape_records::Edge {
+                                        delta: point_to_vec2d(current_pos, transformed_end),
+                                        control_delta: Some(point_to_vec2d(current_pos, transformed_control)),
+                                    },
+                                ));
+
+                                current_pos = transformed_end;
+                                last_control_point = Some(transformed_control);
+                            },
+                            PathSegment::ClosePath { .. } => {
+                                if let Some(first_record) = current_shape.records.first() {
+                                    if let ShapeRecord::StyleChange(style_change) = first_record {
+                                        if let Some(move_to) = style_change.move_to {
+                                            let first_point = Point::new(move_to.x as f64, move_to.y as f64);
+                                            current_shape.records.push(ShapeRecord::Edge(
+                                                shape_records::Edge {
+                                                    delta: point_to_vec2d(current_pos, first_point),
+                                                    control_delta: None,
+                                                },
+                                            ));
+                                            current_pos = first_point;
+                                        }
+                                    }
+                                }
+                                last_control_point = None;
+                            },
+                            PathSegment::EllipticalArc { abs, rx, ry, x_axis_rotation, large_arc, sweep, x, y } => {
+                                let end_point = if abs {
+                                    Point::new(x as f64, y as f64)
+                                } else {
+                                    Point::new(current_pos.x + x as f64, current_pos.y + y as f64)
+                                };
+
+                                if rx == 0.0 || ry == 0.0 {
+                                    let transformed_end = path_transform
+                                        .as_ref()
+                                        .map(|t| apply_transform(end_point, t))
+                                        .unwrap_or(end_point);
+                                    let transformed_end = group_transform
+                                        .as_ref()
+                                        .map(|t| apply_transform(transformed_end, t))
+                                        .unwrap_or(transformed_end);
+
+                                    current_shape.records.push(ShapeRecord::Edge(
+                                        shape_records::Edge {
+                                            delta: point_to_vec2d(current_pos, transformed_end),
+                                            control_delta: None,
+                                        },
+                                    ));
+                                    current_pos = transformed_end;
+                                    continue;
+                                }
+
+                                let rx = rx.abs();
+                                let ry = ry.abs();
+                                let x_axis_rotation = x_axis_rotation.to_radians();
+
+                                let dx = (current_pos.x - end_point.x) / 2.0;
+                                let dy = (current_pos.y - end_point.y) / 2.0;
+
+                                let cos_phi = x_axis_rotation.cos();
+                                let sin_phi = x_axis_rotation.sin();
+
+                                let x1 = cos_phi * dx + sin_phi * dy;
+                                let y1 = -sin_phi * dx + cos_phi * dy;
+
+                                let lambda = (x1 * x1) / (rx * rx) + (y1 * y1) / (ry * ry);
+                                let (rx, ry) = if lambda > 1.0 {
+                                    let sqrt_lambda = lambda.sqrt();
+                                    (rx * sqrt_lambda, ry * sqrt_lambda)
+                                } else {
+                                    (rx, ry)
+                                };
+
+                                let sign = if large_arc == sweep { -1.0 } else { 1.0 };
+                                let sq = ((rx * rx * ry * ry) - (rx * rx * y1 * y1) - (ry * ry * x1 * x1)) /
+                                        ((rx * rx * y1 * y1) + (ry * ry * x1 * x1));
+                                let sq = if sq < 0.0 { 0.0 } else { sq };
+                                let coef = sign * sq.sqrt();
+
+                                let cx1 = coef * ((rx * y1) / ry);
+                                let cy1 = coef * -((ry * x1) / rx);
+
+                                let cx = cos_phi * cx1 - sin_phi * cy1 + (current_pos.x + end_point.x) / 2.0;
+                                let cy = sin_phi * cx1 + cos_phi * cy1 + (current_pos.y + end_point.y) / 2.0;
+
+                                let start_angle = ((y1 - cy1) / ry).atan2((x1 - cx1) / rx);
+                                let mut delta_angle = (((-y1 - cy1) / ry).atan2((-x1 - cx1) / rx) - start_angle) % (2.0 * std::f64::consts::PI);
+
+                                if !sweep && delta_angle > 0.0 {
+                                    delta_angle -= 2.0 * std::f64::consts::PI;
+                                } else if sweep && delta_angle < 0.0 {
+                                    delta_angle += 2.0 * std::f64::consts::PI;
+                                }
+
+                                let n_curves = (delta_angle.abs() * 2.0 / std::f64::consts::PI).ceil() as i32;
+                                let delta_angle = delta_angle / n_curves as f64;
+
+                                for i in 0..n_curves {
+                                    let angle = start_angle + i as f64 * delta_angle;
+                                    let next_angle = angle + delta_angle;
+
+                                    let alpha = delta_angle.sin() * (delta_angle.cos() - 1.0) / delta_angle.cos();
+
+                                    let p0 = Point::new(
+                                        cx + (angle.cos() * rx * cos_phi - angle.sin() * ry * sin_phi),
+                                        cy + (angle.cos() * rx * sin_phi + angle.sin() * ry * cos_phi)
+                                    );
+                                    let p3 = Point::new(
+                                        cx + (next_angle.cos() * rx * cos_phi - next_angle.sin() * ry * sin_phi),
+                                        cy + (next_angle.cos() * rx * sin_phi + next_angle.sin() * ry * cos_phi)
+                                    );
+
+                                    let control = Point::new(
+                                        p0.x + alpha * (-angle.sin() * rx * cos_phi - angle.cos() * ry * sin_phi),
+                                        p0.y + alpha * (-angle.sin() * rx * sin_phi + angle.cos() * ry * cos_phi)
+                                    );
+
+                                    let transformed_control = path_transform
+                                        .as_ref()
+                                        .map(|t| apply_transform(control, t))
+                                        .unwrap_or(control);
+                                    let transformed_control = group_transform
+                                        .as_ref()
+                                        .map(|t| apply_transform(transformed_control, t))
+                                        .unwrap_or(transformed_control);
+
+                                    let transformed_p3 = path_transform
+                                        .as_ref()
+                                        .map(|t| apply_transform(p3, t))
+                                        .unwrap_or(p3);
+                                    let transformed_p3 = group_transform
+                                        .as_ref()
+                                        .map(|t| apply_transform(transformed_p3, t))
+                                        .unwrap_or(transformed_p3);
+
+                                    current_shape.records.push(ShapeRecord::Edge(
+                                        shape_records::Edge {
+                                            delta: point_to_vec2d(current_pos, transformed_p3),
+                                            control_delta: Some(point_to_vec2d(current_pos, transformed_control)),
+                                        },
+                                    ));
+
+                                    current_pos = transformed_p3;
+                                }
+                            },
+                        }
+                    }
+
+                    println!("Path processed: {} straight edges, {} curves", path_count, path_count);
                 }
             }
             _ => {}
         }
+    }
+
+    // Add the final shape to the collection
+    if !current_shape.records.is_empty() {
+        let record_count = current_shape.records.len();
+        shapes.push(current_shape);
+        println!("Final shape added to collection with {} records", record_count);
     }
 
     Ok(shapes)
@@ -485,10 +886,13 @@ fn replace_shape_in_movie(movie: &mut Movie, shape_id: u16, new_shapes: &[Shape]
         if let Tag::DefineShape(tag) = tag {
             if tag.id == shape_id {
                 println!("Found shape with ID {}", shape_id);
+                println!("Original shape records: {}", tag.shape.records.len());
+                println!("Original fill styles: {}", tag.shape.initial_styles.fill.len());
+
                 // Find a matching shape from the new shapes
                 if let Some(new_shape) = new_shapes.first() {
-                    println!("Original shape styles: {:?}", tag.shape.initial_styles);
-                    println!("New shape styles: {:?}", new_shape.initial_styles);
+                    println!("New shape records: {}", new_shape.records.len());
+                    println!("New fill styles: {}", new_shape.initial_styles.fill.len());
 
                     // Create a new shape with the original bitmap fills
                     let mut modified_shape = new_shape.clone();
@@ -573,7 +977,7 @@ fn calculate_shape_bounds(shape: &Shape) -> Result<Rect, String> {
         });
     }
 
-    const PADDING: i32 = 10;
+    const PADDING: i32 = 200;  // 10 pixels * 20 twips/pixel
     Ok(Rect {
         x_min: min_x - PADDING,
         x_max: max_x + PADDING,
@@ -713,19 +1117,19 @@ fn apply_tag_modification(movie: &mut Movie, modification: &TagModification) -> 
                 }
             }
 
-            (Tag::DoAbc(tag), "DoAbcTag") => {
+            (Tag::DoAbc(tag), "DoAbcTag") if modification.tag == "DoAbcTag" => {
                 if let Some(data) = modification.properties.get("data") {
                     tag.data = serde_json::from_value(data.clone())
                         .map_err(|e| format!("Failed to parse ABC data: {}", e))?;
                 }
             }
-            (Tag::DoAction(tag), "DoActionTag") => {
+            (Tag::DoAction(tag), "DoActionTag") if modification.tag == "DoActionTag" => {
                 if let Some(actions) = modification.properties.get("actions") {
                     tag.actions = serde_json::from_value(actions.clone())
                         .map_err(|e| format!("Failed to parse actions: {}", e))?;
                 }
             }
-            (Tag::FileAttributes(tag), "FileAttributesTag") => {
+            (Tag::FileAttributes(tag), "FileAttributesTag") if modification.tag == "FileAttributesTag" => {
                 if let Some(props) = modification.properties.as_object() {
                     if let Some(as3) = props.get("actionScript3") {
                         tag.use_as3 = as3.as_bool().unwrap_or(false);
