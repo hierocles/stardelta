@@ -182,7 +182,7 @@ pub fn apply_json_modifications(
     // Apply ActionScript patches if specified
     if let Some(actionscript_patches) = &config.actionscript {
         println!("Applying ActionScript patches...");
-        if let Err(e) = apply_actionscript_patches(&mut movie, actionscript_patches, &config_json_path) {
+        if let Err(e) = apply_actionscript_patches(&mut movie, actionscript_patches, &config_json_path, _handle) {
             println!("Error applying ActionScript patches: {}", e);
             return Err(format!("Failed to apply ActionScript patches: {}", e));
         }
@@ -1511,7 +1511,7 @@ pub fn read_file_to_string(_handle: AppHandle, path: String) -> Result<String, S
     })
 }
 
-fn apply_actionscript_patches(movie: &mut Movie, patches: &[ActionScriptPatch], config_path: &str) -> Result<(), String> {
+fn apply_actionscript_patches(movie: &mut Movie, patches: &[ActionScriptPatch], config_path: &str, handle: AppHandle) -> Result<(), String> {
     // Create a temporary directory for compilation
     let temp_dir = TempDir::new()
         .map_err(|e| format!("Failed to create temporary directory: {}", e))?;
@@ -1573,7 +1573,7 @@ fn apply_actionscript_patches(movie: &mut Movie, patches: &[ActionScriptPatch], 
             .map_err(|e| format!("Failed to write temporary AS file: {}", e))?;
 
         // Compile the ActionScript using JPEXS
-        let abc_data = compile_with_jpexs(&temp_as_path, &temp_swf_path)?;
+        let abc_data = compile_with_jpexs(handle.clone(), &temp_as_path, &temp_swf_path)?;
 
         // Create a new DoABC tag with the compiled code
         let new_tag = Tag::DoAbc(swf_types::tags::DoAbc {
@@ -1672,7 +1672,7 @@ fn check_java_installation() -> Result<(), String> {
     Ok(())
 }
 
-fn compile_with_jpexs(as_path: &Path, swf_path: &Path) -> Result<Vec<u8>, String> {
+fn compile_with_jpexs(handle: AppHandle, as_path: &Path, swf_path: &Path) -> Result<Vec<u8>, String> {
     // Check Java installation first
     check_java_installation()?;
 
@@ -1690,25 +1690,47 @@ fn compile_with_jpexs(as_path: &Path, swf_path: &Path) -> Result<Vec<u8>, String
 
     println!("Using JPEXS from: {}", resource_path.display());
 
-    // Run JPEXS to compile the ActionScript
+    // Create a temporary output SWF path
+    let output_swf = output_dir.path().join("output.swf");
+
+    // Run JPEXS to import the ActionScript
     let status = Command::new("java")
         .args([
             "-jar",
             resource_path.to_str().unwrap(),
-            "-compile", as_path.to_str().unwrap(),
-            "-swf", swf_path.to_str().unwrap(),
-            "-out", output_dir.path().to_str().unwrap(),
-            "-format", "abc"  // Output in ABC format
+            "-importScript",
+            as_path.to_str().unwrap(),
+            swf_path.to_str().unwrap(),
+            output_swf.to_str().unwrap(),
         ])
         .status()
         .map_err(|e| format!("Failed to execute JPEXS: {}", e))?;
 
     if !status.success() {
-        return Err("JPEXS compilation failed".to_string());
+        return Err("JPEXS script import failed".to_string());
     }
 
-    // Find and read the compiled ABC file
-    let abc_path = output_dir.path().join("Main.abc");
-    fs::read(abc_path)
-        .map_err(|e| format!("Failed to read compiled ABC file: {}", e))
+    // Now we need to extract the ABC tag from the output SWF
+    // First convert the SWF to JSON so we can find the ABC tag
+    let temp_json = output_dir.path().join("temp.json");
+    convert_swf_to_json(
+        handle,
+        output_swf.to_string_lossy().to_string(),
+        temp_json.to_string_lossy().to_string(),
+    )?;
+
+    // Read and parse the JSON
+    let json_data = fs::read_to_string(&temp_json)
+        .map_err(|e| format!("Failed to read temporary JSON: {}", e))?;
+    let movie: Movie = serde_json::from_str(&json_data)
+        .map_err(|e| format!("Failed to parse temporary JSON: {}", e))?;
+
+    // Find the first DoAbc tag and return its data
+    for tag in movie.tags {
+        if let Tag::DoAbc(abc_tag) = tag {
+            return Ok(abc_tag.data);
+        }
+    }
+
+    Err("No ABC tag found in compiled SWF".to_string())
 }
