@@ -4879,6 +4879,7 @@ dependencies = [
  "tauri-plugin-devtools-app",
  "tauri-plugin-dialog",
  "tauri-plugin-log",
+ "tempfile",
  "usvg",
  "xdelta3",
  "xmlparser",

@@ -14,6 +14,8 @@ use swf_types::{
 use tauri::{command, AppHandle};
 use xmlparser::{Token, Tokenizer};
 use crate::ba2::{Ba2Path, extract_file_from_ba2, is_ba2_path};
+use std::process::Command;
+use tempfile::TempDir;
 
 const SWF_SCALE: f32 = 20.0;  // SWF uses 20 twips per pixel, whereas SVG uses 1px per pixel
 
@@ -21,6 +23,7 @@ const SWF_SCALE: f32 = 20.0;  // SWF uses 20 twips per pixel, whereas SVG uses 1
 pub struct ModificationConfig {
     pub file: Option<Vec<ShapeSource>>,
     pub transparent: Option<Vec<u16>>,  // Shape IDs to make transparent
+    pub actionscript: Option<Vec<ActionScriptPatch>>,  // New field for ActionScript patches
     pub swf: SwfModification,
 }
 
@@ -79,6 +82,21 @@ struct TagModification {
     tag: String,
     id: u16,
     properties: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ActionScriptPatch {
+    pub source_file: String,      // Path to the .as file to insert
+    pub insert_mode: ActionScriptInsertMode,
+    pub class_name: Option<String>,  // Target class name to replace (if using Replace mode)
+    pub package_name: Option<String>, // Target package name (optional)
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ActionScriptInsertMode {
+    Add,        // Add as a new class
+    Replace,    // Replace existing class if found
 }
 
 fn read_swf_file(path: &str) -> Result<Vec<u8>, String> {
@@ -158,6 +176,15 @@ pub fn apply_json_modifications(
         if let Err(e) = apply_shape_replacements(&mut movie, shape_sources, &config_json_path) {
             println!("Error applying shape replacements: {}", e);
             return Err(format!("Failed to apply shape replacements: {}", e));
+        }
+    }
+
+    // Apply ActionScript patches if specified
+    if let Some(actionscript_patches) = &config.actionscript {
+        println!("Applying ActionScript patches...");
+        if let Err(e) = apply_actionscript_patches(&mut movie, actionscript_patches, &config_json_path) {
+            println!("Error applying ActionScript patches: {}", e);
+            return Err(format!("Failed to apply ActionScript patches: {}", e));
         }
     }
 
@@ -1482,4 +1509,206 @@ pub fn read_file_to_string(_handle: AppHandle, path: String) -> Result<String, S
         println!("Failed to read file '{}': {}", path, e);
         format!("Failed to read file: {}", e)
     })
+}
+
+fn apply_actionscript_patches(movie: &mut Movie, patches: &[ActionScriptPatch], config_path: &str) -> Result<(), String> {
+    // Create a temporary directory for compilation
+    let temp_dir = TempDir::new()
+        .map_err(|e| format!("Failed to create temporary directory: {}", e))?;
+
+    // Get the config file's directory
+    let config_dir = Path::new(config_path)
+        .parent()
+        .ok_or_else(|| "Could not determine config file directory".to_string())?;
+
+    for patch in patches {
+        // Read the ActionScript source file
+        let source_path = config_dir.join(&patch.source_file);
+        let mut source_code = fs::read_to_string(&source_path)
+            .map_err(|e| format!("Failed to read ActionScript file '{}': {}", patch.source_file, e))?;
+
+        // If package_name is provided, ensure the code has the correct package declaration
+        if let Some(package_name) = &patch.package_name {
+            // Check if there's an existing package declaration
+            if source_code.contains("package ") {
+                // Replace existing package declaration
+                source_code = source_code.replace(
+                    &extract_package_declaration(&source_code)
+                        .unwrap_or_else(|| "package ".to_string()),
+                    &format!("package {} ", package_name)
+                );
+            } else {
+                // Add package declaration at the start
+                source_code = format!("package {} {{\n{}\n}}", package_name, source_code);
+            }
+        }
+
+        // If class_name is provided and we're in Replace mode, ensure the class has the correct name
+        if patch.insert_mode == ActionScriptInsertMode::Replace {
+            if let Some(class_name) = &patch.class_name {
+                // Check if there's an existing class declaration
+                if source_code.contains("class ") {
+                    // Replace existing class name
+                    source_code = source_code.replace(
+                        &extract_class_declaration(&source_code)
+                            .unwrap_or_else(|| "class ".to_string()),
+                        &format!("class {} ", class_name)
+                    );
+                }
+            }
+        }
+
+        // Create a temporary SWF for compilation
+        let temp_swf_path = temp_dir.path().join("temp.swf");
+
+        // Write the current movie to the temp SWF
+        let swf_data = emit_swf(&movie, swf_types::CompressionMethod::None)
+            .map_err(|e| format!("Failed to write temporary SWF: {}", e))?;
+        fs::write(&temp_swf_path, swf_data)
+            .map_err(|e| format!("Failed to write temporary SWF: {}", e))?;
+
+        // Write the modified ActionScript file to the temp directory
+        let temp_as_path = temp_dir.path().join("Main.as");
+        fs::write(&temp_as_path, source_code)
+            .map_err(|e| format!("Failed to write temporary AS file: {}", e))?;
+
+        // Compile the ActionScript using JPEXS
+        let abc_data = compile_with_jpexs(&temp_as_path, &temp_swf_path)?;
+
+        // Create a new DoABC tag with the compiled code
+        let new_tag = Tag::DoAbc(swf_types::tags::DoAbc {
+            header: None,
+            data: abc_data,
+        });
+
+        // Add or replace the tag based on insert mode
+        match patch.insert_mode {
+            ActionScriptInsertMode::Add => {
+                movie.tags.push(new_tag);
+            },
+            ActionScriptInsertMode::Replace => {
+                if let Some(class_name) = &patch.class_name {
+                    // Try to find and replace the existing ABC tag with matching class name
+                    let mut found = false;
+                    for tag in &mut movie.tags {
+                        if let Tag::DoAbc(abc_tag) = tag {
+                            // TODO: In the future, we could parse ABC data to verify class name
+                            // For now, we'll replace based on the presence of the class name in the data
+                            if contains_class_name(&abc_tag.data, class_name) {
+                                *tag = new_tag.clone();
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                    if !found {
+                        movie.tags.push(new_tag);
+                    }
+                } else {
+                    // If no class name specified, replace first DoAbc tag
+                    let mut found = false;
+                    for tag in &mut movie.tags {
+                        if let Tag::DoAbc(_) = tag {
+                            *tag = new_tag.clone();
+                            found = true;
+                            break;
+                        }
+                    }
+                    if !found {
+                        movie.tags.push(new_tag);
+                    }
+                }
+            },
+        }
+    }
+
+    Ok(())
+}
+
+// Helper function to extract package declaration from ActionScript code
+fn extract_package_declaration(source: &str) -> Option<String> {
+    if let Some(start) = source.find("package ") {
+        if let Some(end) = source[start..].find("{") {
+            return Some(source[start..start + end].trim().to_string());
+        }
+    }
+    None
+}
+
+// Helper function to extract class declaration from ActionScript code
+fn extract_class_declaration(source: &str) -> Option<String> {
+    if let Some(start) = source.find("class ") {
+        if let Some(end) = source[start..].find("{") {
+            let class_decl = source[start..start + end].trim();
+            if let Some(extends_idx) = class_decl.find("extends") {
+                return Some(class_decl[..extends_idx].trim().to_string());
+            }
+            if let Some(implements_idx) = class_decl.find("implements") {
+                return Some(class_decl[..implements_idx].trim().to_string());
+            }
+            return Some(class_decl.to_string());
+        }
+    }
+    None
+}
+
+// Helper function to check if ABC data contains a class name
+fn contains_class_name(abc_data: &[u8], class_name: &str) -> bool {
+    // Simple string search in the ABC data
+    // This is a basic implementation - in the future, we could properly parse the ABC format
+    let class_bytes = class_name.as_bytes();
+    abc_data.windows(class_bytes.len()).any(|window| window == class_bytes)
+}
+
+fn check_java_installation() -> Result<(), String> {
+    let output = Command::new("java")
+        .arg("-version")
+        .output()
+        .map_err(|_| "Java is not installed or not accessible".to_string())?;
+
+    if !output.status.success() {
+        return Err("Failed to verify Java installation".to_string());
+    }
+    Ok(())
+}
+
+fn compile_with_jpexs(as_path: &Path, swf_path: &Path) -> Result<Vec<u8>, String> {
+    // Check Java installation first
+    check_java_installation()?;
+
+    // Create a temporary directory for JPEXS output
+    let output_dir = TempDir::new()
+        .map_err(|e| format!("Failed to create temporary output directory: {}", e))?;
+
+    // Get the path to ffdec.jar from the bundled resources
+    let resource_path = std::env::current_exe()
+        .map_err(|e| format!("Failed to get executable path: {}", e))?
+        .parent()
+        .ok_or_else(|| "Failed to get parent directory".to_string())?
+        .join("resources")
+        .join("ffdec.jar");
+
+    println!("Using JPEXS from: {}", resource_path.display());
+
+    // Run JPEXS to compile the ActionScript
+    let status = Command::new("java")
+        .args([
+            "-jar",
+            resource_path.to_str().unwrap(),
+            "-compile", as_path.to_str().unwrap(),
+            "-swf", swf_path.to_str().unwrap(),
+            "-out", output_dir.path().to_str().unwrap(),
+            "-format", "abc"  // Output in ABC format
+        ])
+        .status()
+        .map_err(|e| format!("Failed to execute JPEXS: {}", e))?;
+
+    if !status.success() {
+        return Err("JPEXS compilation failed".to_string());
+    }
+
+    // Find and read the compiled ABC file
+    let abc_path = output_dir.path().join("Main.abc");
+    fs::read(abc_path)
+        .map_err(|e| format!("Failed to read compiled ABC file: {}", e))
 }

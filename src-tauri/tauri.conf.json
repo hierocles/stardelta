@@ -11,6 +11,9 @@
     "icon": [
       "icons/icon.png",
       "icons/icon.ico"
+    ],
+    "resources": [
+      "resources/*"
     ]
   },
   "productName": "StarDelta",
