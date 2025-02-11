@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="400" height="600" xmlns="http://www.w3.org/2000/svg">
+    <!-- Menu panel background -->
+    <path d="M 0 0
+             h 400
+             v 600
+             h -400
+             v -600 z"
+          fill="#1a1a1a"
+          fill-opacity="0.95"
+          stroke="#333333"
+          stroke-width="1"/>
+
+    <!-- Decorative top border -->
+    <path d="M 0 0
+             h 400
+             v 4
+             h -400
+             v -4 z"
+          fill="#4a90e2"
+          fill-opacity="0.8"/>
+
+    <!-- Corner accent -->
+    <path d="M 0 0
+             l 20 0
+             l 0 20
+             l -20 -20 z"
+          fill="#4a90e2"
+          fill-opacity="0.6"/>
+</svg>
