@@ -1,6 +1,6 @@
 [package]
 name = "stardelta"
-version = "2.1.1"
+version = "2.1.2"
 description = "Delta patcher for Starfield UIs"
 authors = ["Dylan Henrich"]
 edition = "2021"
