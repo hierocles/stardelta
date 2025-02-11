@@ -29,6 +29,7 @@ pub struct BatchProcessConfig {
     pub config_file: String,           // Path to the main configuration file
     pub output_directory: String,      // Directory to save processed files
     pub ba2_path: Option<String>,      // User-selected BA2 file path (if using BA2)
+    pub swf_mappings: Vec<SwfMapping>, // Mappings from mod names to SWF file paths
 }
 
 #[derive(Debug, Deserialize)]
@@ -79,6 +80,12 @@ struct TagModification {
     tag: String,
     id: u16,
     properties: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SwfMapping {
+    pub mod_name: String,
+    pub swf_path: String,
 }
 
 fn read_swf_file(path: &str) -> Result<Vec<u8>, String> {
@@ -1404,8 +1411,12 @@ pub fn batch_process_swf(
         } else {
             // Legacy non-BA2 handling - single file with config
             if let Some(config_path) = &mod_config.config {
-                // For non-BA2 mods, the name field contains the target SWF file name
-                let swf_path = mod_config.name.clone();
+                // Find the SWF path from the mappings
+                let swf_path = config.swf_mappings.iter()
+                    .find(|m| m.mod_name == mod_config.name)
+                    .map(|m| m.swf_path.clone())
+                    .ok_or_else(|| format!("No SWF mapping found for mod: {}", mod_config.name))?;
+
                 let file_name = Path::new(&swf_path)
                     .file_name()
                     .and_then(|n| n.to_str())
