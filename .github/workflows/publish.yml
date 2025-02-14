@@ -7,6 +7,7 @@ on:
 
 jobs:
   publish-tauri:
+    environment: "Signing"
     permissions:
       contents: write
     strategy:
@@ -109,7 +110,7 @@ jobs:
           Set-Content -Path $tauriConfJson -Value $tauriConfigDataAsJson
 
           Write-Host "Login to Azure"
-          az login --service-principal --output none -t $env:AZURE_TENANT_ID -u $env:AZURE_CLIENT_ID -p $env:AZURE_CLIENT_SECRET
+          az login --service-principal --output none --username $env:AZURE_CLIENT_ID --password $env:AZURE_CLIENT_SECRET --tenant $env:AZURE_TENANT_ID
 
       - name: install frontend dependencies
         run: npm install
