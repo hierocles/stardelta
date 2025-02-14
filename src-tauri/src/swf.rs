@@ -9,7 +9,7 @@ use swf_emitter::emit_swf;
 use swf_parser::parse_swf;
 use swf_types::{
     fill_styles, shape_records, CapStyle, FillStyle, JoinStyle, LineStyle, Movie, Rect, SRgb8,
-    Shape, ShapeRecord, ShapeStyles, StraightSRgba8, Tag,
+    Shape, ShapeRecord, ShapeStyles, StraightSRgba8, Tag, text, tags,
 };
 use tauri::{command, AppHandle};
 use xmlparser::{Token, Tokenizer};
@@ -22,6 +22,8 @@ pub struct ModificationConfig {
     pub file: Option<Vec<ShapeSource>>,
     pub transparent: Option<Vec<u16>>,  // Shape IDs to make transparent
     pub swf: SwfModification,
+    pub new_elements: Option<NewElements>,  // New field for adding elements
+    pub remove_elements: Option<RemoveElements>,  // New field for removing elements
 }
 
 #[derive(Debug, Deserialize)]
@@ -61,18 +63,20 @@ pub struct ShapeSource {
 pub struct SwfModification {
     bounds: Option<Bounds>,
     modifications: Vec<TagModification>,
+    new_elements: Option<NewElements>,
+    remove_elements: Option<RemoveElements>,
 }
 
 #[derive(Debug, Deserialize)]
-struct Bounds {
-    x: BoundRange,
-    y: BoundRange,
+pub struct Bounds {
+    pub x: BoundRange,
+    pub y: BoundRange,
 }
 
 #[derive(Debug, Deserialize)]
-struct BoundRange {
-    min: i32,
-    max: i32,
+pub struct BoundRange {
+    pub min: i32,
+    pub max: i32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -86,6 +90,61 @@ struct TagModification {
 pub struct SwfMapping {
     pub mod_name: String,
     pub swf_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NewElements {
+    pub shapes: Option<Vec<NewShape>>,
+    pub sprites: Option<Vec<NewSprite>>,
+    pub texts: Option<Vec<NewText>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NewShape {
+    pub source: String,           // Path to SVG source
+    pub id: Option<u16>,         // Optional ID (if not provided, will auto-generate)
+    pub bounds: Option<Bounds>,   // Optional bounds override
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NewSprite {
+    pub id: Option<u16>,
+    pub frame_count: u16,
+    pub tags: Vec<Tag>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NewText {
+    pub id: Option<u16>,
+    pub text: String,
+    pub bounds: Bounds,
+    pub font_class: String,
+    pub font_size: u16,
+    pub color: Option<StraightSRgba8>,
+    pub word_wrap: bool,
+    pub multiline: bool,
+    pub readonly: bool,
+    pub no_select: bool,
+    pub html: bool,
+    pub use_outlines: bool,
+    pub align: text::TextAlignment,
+    pub margin_left: u16,
+    pub margin_right: u16,
+    pub indent: u16,
+    pub leading: i16,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RemoveElements {
+    pub shapes: Option<Vec<u16>>,      // Shape IDs to remove
+    pub sprites: Option<Vec<u16>>,     // Sprite IDs to remove
+    pub texts: Option<Vec<u16>>,       // Text IDs to remove
+    pub buttons: Option<Vec<u16>>,     // Button IDs to remove
+    pub sounds: Option<Vec<u16>>,      // Sound IDs to remove
+    pub bitmaps: Option<Vec<u16>>,     // Bitmap IDs to remove
+    pub fonts: Option<Vec<u16>>,       // Font IDs to remove
+    pub frames: Option<Vec<String>>,   // Frame labels to remove
+    pub scenes: Option<Vec<String>>,   // Scene names to remove
 }
 
 fn read_swf_file(path: &str) -> Result<Vec<u8>, String> {
@@ -170,9 +229,28 @@ pub fn apply_json_modifications(
 
     // Apply other modifications
     println!("Applying SWF modifications...");
-    if let Err(e) = apply_modifications(&mut movie, &config.swf) {
+    if let Err(e) = apply_modifications(&mut movie, &config.swf, Path::new(&config_json_path)) {
         println!("Error applying modifications: {}", e);
         return Err(format!("Failed to apply modifications: {}", e));
+    }
+
+    // Handle new elements from the root config if present
+    if let Some(new_elements) = &config.new_elements {
+        println!("Applying new elements from root config...");
+        if let Some(shapes) = &new_elements.shapes {
+            add_new_shapes(&mut movie, shapes, Path::new(&config_json_path))?;
+        }
+        if let Some(sprites) = &new_elements.sprites {
+            add_new_sprites(&mut movie, sprites)?;
+        }
+        if let Some(texts) = &new_elements.texts {
+            add_new_texts(&mut movie, texts)?;
+        }
+    }
+
+    // Handle element removal if present
+    if let Some(remove_elements) = &config.swf.remove_elements {
+        remove_swf_elements(&mut movie, remove_elements)?;
     }
 
     // Write modified JSON
@@ -993,7 +1071,148 @@ fn calculate_shape_bounds(shape: &Shape) -> Result<Rect, String> {
     })
 }
 
-fn apply_modifications(movie: &mut Movie, config: &SwfModification) -> Result<(), String> {
+fn find_next_available_id(movie: &Movie) -> u16 {
+    let mut max_id = 0;
+    for tag in &movie.tags {
+        match tag {
+            Tag::DefineShape(shape) => max_id = max_id.max(shape.id),
+            Tag::DefineSprite(sprite) => max_id = max_id.max(sprite.id),
+            Tag::DefineText(text) => max_id = max_id.max(text.id),
+            Tag::DefineDynamicText(text) => max_id = max_id.max(text.id),
+            Tag::DefineButton(button) => max_id = max_id.max(button.id),
+            Tag::DefineMorphShape(shape) => max_id = max_id.max(shape.id),
+            Tag::DefineBitmap(bitmap) => max_id = max_id.max(bitmap.id),
+            Tag::DefineFont(font) => max_id = max_id.max(font.id),
+            _ => {}
+        }
+    }
+    max_id + 1
+}
+
+fn add_new_shapes(movie: &mut Movie, shapes: &[NewShape], config_path: &Path) -> Result<(), String> {
+    println!("Adding new shapes to movie...");
+
+    for shape in shapes {
+        // Resolve the source path relative to the config file's directory
+        let source_path = config_path
+            .parent()
+            .ok_or_else(|| "Could not determine config file directory".to_string())?
+            .join(&shape.source);
+
+        println!("Processing new shape from source: {}", source_path.display());
+
+        // Parse the SVG source into shapes
+        let parsed_shapes = parse_shape_source(&source_path)?;
+
+        if parsed_shapes.is_empty() {
+            return Err(format!("No shapes found in SVG file: {}", source_path.display()));
+        }
+
+        // Use provided ID or generate a new one
+        let shape_id = shape.id.unwrap_or_else(|| find_next_available_id(movie));
+
+        // Create the shape tag
+        let shape_tag = Tag::DefineShape(tags::DefineShape {
+            id: shape_id,
+            bounds: if let Some(bounds) = &shape.bounds {
+                Rect {
+                    x_min: bounds.x.min,
+                    x_max: bounds.x.max,
+                    y_min: bounds.y.min,
+                    y_max: bounds.y.max,
+                }
+            } else {
+                calculate_shape_bounds(&parsed_shapes[0])?
+            },
+            edge_bounds: None,
+            has_fill_winding: false,
+            has_non_scaling_strokes: false,
+            has_scaling_strokes: false,
+            shape: parsed_shapes[0].clone(),
+        });
+
+        // Add the new shape tag to the movie
+        movie.tags.push(shape_tag);
+        println!("Added new shape with ID: {}", shape_id);
+    }
+
+    Ok(())
+}
+
+fn add_new_sprites(movie: &mut Movie, sprites: &[NewSprite]) -> Result<(), String> {
+    println!("Adding new sprites to movie...");
+
+    for sprite in sprites {
+        // Use provided ID or generate a new one
+        let sprite_id = sprite.id.unwrap_or_else(|| find_next_available_id(movie));
+
+        // Create the sprite tag
+        let sprite_tag = Tag::DefineSprite(swf_types::tags::DefineSprite {
+            id: sprite_id,
+            frame_count: sprite.frame_count as usize,
+            tags: sprite.tags.clone(),
+        });
+
+        // Add the new sprite tag to the movie
+        movie.tags.push(sprite_tag);
+        println!("Added new sprite with ID: {}", sprite_id);
+    }
+
+    Ok(())
+}
+
+fn add_new_texts(movie: &mut Movie, texts: &[NewText]) -> Result<(), String> {
+    println!("Adding new text elements to movie...");
+
+    for text in texts {
+        // Use provided ID or generate a new one
+        let text_id = text.id.unwrap_or_else(|| find_next_available_id(movie));
+
+        // Create text bounds
+        let bounds = Rect {
+            x_min: text.bounds.x.min,
+            x_max: text.bounds.x.max,
+            y_min: text.bounds.y.min,
+            y_max: text.bounds.y.max,
+        };
+
+        // Create a dynamic text tag
+        let text_tag = Tag::DefineDynamicText(swf_types::tags::DefineDynamicText {
+            id: text_id,
+            bounds,
+            word_wrap: text.word_wrap,
+            multiline: text.multiline,
+            password: false,
+            readonly: text.readonly,
+            auto_size: false,
+            no_select: text.no_select,
+            border: false,
+            was_static: false,
+            html: text.html,
+            use_glyph_font: text.use_outlines,
+            font_id: None,
+            font_class: Some(text.font_class.clone()),
+            font_size: Some(text.font_size),
+            color: text.color,
+            max_length: None,
+            align: text.align,
+            margin_left: text.margin_left,
+            margin_right: text.margin_right,
+            indent: text.indent,
+            leading: text.leading,
+            variable_name: None,
+            text: Some(text.text.clone()),
+        });
+
+        // Add the new text tag to the movie
+        movie.tags.push(text_tag);
+        println!("Added new text with ID: {}", text_id);
+    }
+
+    Ok(())
+}
+
+fn apply_modifications(movie: &mut Movie, config: &SwfModification, config_path: &Path) -> Result<(), String> {
     if let Some(bounds) = &config.bounds {
         movie.header.frame_size.x_min = bounds.x.min;
         movie.header.frame_size.x_max = bounds.x.max;
@@ -1001,8 +1220,27 @@ fn apply_modifications(movie: &mut Movie, config: &SwfModification) -> Result<()
         movie.header.frame_size.y_max = bounds.y.max;
     }
 
+    // Apply existing tag modifications
     for modification in &config.modifications {
         apply_tag_modification(movie, modification)?;
+    }
+
+    // Handle new elements if present
+    if let Some(new_elements) = &config.new_elements {
+        if let Some(shapes) = &new_elements.shapes {
+            add_new_shapes(movie, shapes, config_path)?;
+        }
+        if let Some(sprites) = &new_elements.sprites {
+            add_new_sprites(movie, sprites)?;
+        }
+        if let Some(texts) = &new_elements.texts {
+            add_new_texts(movie, texts)?;
+        }
+    }
+
+    // Handle element removal if present
+    if let Some(remove_elements) = &config.remove_elements {
+        remove_swf_elements(movie, remove_elements)?;
     }
 
     Ok(())
@@ -1214,6 +1452,90 @@ fn apply_tag_modification(movie: &mut Movie, modification: &TagModification) -> 
     Ok(())
 }
 
+fn remove_swf_elements(movie: &mut Movie, elements: &RemoveElements) -> Result<(), String> {
+    println!("Starting element removal process...");
+
+    // Create a set of IDs to remove for each type
+    let shape_ids: std::collections::HashSet<_> = elements.shapes.as_ref().map(|v| v.iter().copied().collect()).unwrap_or_default();
+    let sprite_ids: std::collections::HashSet<_> = elements.sprites.as_ref().map(|v| v.iter().copied().collect()).unwrap_or_default();
+    let text_ids: std::collections::HashSet<_> = elements.texts.as_ref().map(|v| v.iter().copied().collect()).unwrap_or_default();
+    let button_ids: std::collections::HashSet<_> = elements.buttons.as_ref().map(|v| v.iter().copied().collect()).unwrap_or_default();
+    let sound_ids: std::collections::HashSet<_> = elements.sounds.as_ref().map(|v| v.iter().copied().collect()).unwrap_or_default();
+    let bitmap_ids: std::collections::HashSet<_> = elements.bitmaps.as_ref().map(|v| v.iter().copied().collect()).unwrap_or_default();
+    let font_ids: std::collections::HashSet<_> = elements.fonts.as_ref().map(|v| v.iter().copied().collect()).unwrap_or_default();
+    let frame_labels: std::collections::HashSet<_> = elements.frames.as_ref().map(|v| v.iter().cloned().collect()).unwrap_or_default();
+    let scene_names: std::collections::HashSet<_> = elements.scenes.as_ref().map(|v| v.iter().cloned().collect()).unwrap_or_default();
+
+    // Filter out tags based on their type and ID
+    movie.tags.retain(|tag| {
+        match tag {
+            Tag::DefineShape(shape) => !shape_ids.contains(&shape.id),
+            Tag::DefineSprite(sprite) => !sprite_ids.contains(&sprite.id),
+            Tag::DefineText(text) => !text_ids.contains(&text.id),
+            Tag::DefineDynamicText(text) => !text_ids.contains(&text.id),
+            Tag::DefineButton(button) => !button_ids.contains(&button.id),
+            Tag::DefineSound(sound) => !sound_ids.contains(&sound.id),
+            Tag::DefineBitmap(bitmap) => !bitmap_ids.contains(&bitmap.id),
+            Tag::DefineFont(font) => !font_ids.contains(&font.id),
+            Tag::FrameLabel(label) => !frame_labels.contains(&label.name),
+            Tag::DefineSceneAndFrameLabelData(data) => {
+                // For scene data, we'll keep the tag but filter its contents if needed
+                if scene_names.is_empty() {
+                    true
+                } else {
+                    // Create a filtered copy of scenes
+                    let filtered_scenes = data.scenes
+                        .iter()
+                        .filter(|scene| !scene_names.contains(&scene.name))
+                        .cloned()
+                        .collect::<Vec<_>>();
+
+                    // Only keep if we have scenes or labels
+                    !filtered_scenes.is_empty() || !data.labels.is_empty()
+                }
+            },
+            _ => true
+        }
+    });
+
+    // Update scene data with filtered scenes
+    if !scene_names.is_empty() {
+        for tag in &mut movie.tags {
+            if let Tag::DefineSceneAndFrameLabelData(data) = tag {
+                data.scenes = data.scenes
+                    .iter()
+                    .filter(|scene| !scene_names.contains(&scene.name))
+                    .cloned()
+                    .collect();
+            }
+        }
+    }
+
+    // Clean up any references to removed elements in sprite tags
+    for tag in &mut movie.tags {
+        if let Tag::DefineSprite(sprite) = tag {
+            sprite.tags.retain(|tag| {
+                match tag {
+                    Tag::PlaceObject(place) => {
+                        // Remove placement of removed elements
+                        !shape_ids.contains(&place.character_id.unwrap_or(0)) &&
+                        !sprite_ids.contains(&place.character_id.unwrap_or(0)) &&
+                        !text_ids.contains(&place.character_id.unwrap_or(0)) &&
+                        !button_ids.contains(&place.character_id.unwrap_or(0)) &&
+                        !bitmap_ids.contains(&place.character_id.unwrap_or(0))
+                    },
+                    Tag::StartSound(sound) => !sound_ids.contains(&sound.sound_id),
+                    Tag::FrameLabel(label) => !frame_labels.contains(&label.name),
+                    _ => true
+                }
+            });
+        }
+    }
+
+    println!("Element removal completed successfully");
+    Ok(())
+}
+
 #[command]
 pub fn convert_json_to_swf(
     _handle: AppHandle,
@@ -1320,7 +1642,7 @@ fn apply_transparency(movie: &mut Movie, shape_ids: &[u16]) -> Result<(), String
                     };
 
                     // Create a new DefineShape tag
-                    let new_tag = Tag::DefineShape(swf_types::tags::DefineShape {
+                    let new_tag = Tag::DefineShape(tags::DefineShape {
                         id: shape_id,
                         bounds: shape_tag.bounds.clone(),
                         edge_bounds: None,  // Don't set edge_bounds to avoid forcing Shape4
