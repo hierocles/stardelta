@@ -30,6 +30,87 @@ jobs:
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
+      - name: Add Windows Trusted Signing
+        shell: pwsh
+        if: matrix.platform == 'windows-latest'
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_ENDPOINT: ${{ vars.AZURE_ENDPOINT }}
+          AZURE_CERT_PROFILE_NAME: ${{ vars.AZURE_CERT_PROFILE_NAME }}
+          AZURE_CODE_SIGNING_NAME: ${{ vars.AZURE_CODE_SIGNING_NAME }}
+        run: |
+          $tempFolderPath = Join-Path $env:Temp "mtsc"
+          $mtscName = Join-Path $tempFolderPath "mtsc.nuget.zip"
+          $dlibName = Join-Path $tempFolderPath "bin" | Join-Path -ChildPath "x64" | Join-Path -ChildPath "Azure.CodeSigning.Dlib.dll"
+          $dmdName = Join-Path $tempFolderPath "metadata.json"
+          $tauriConfJson = $env:TAURI_CONF_JSON ?? "./src-tauri/tauri.conf.json"
+
+          if (-not(Test-Path -path $tauriConfJson)) {
+            Throw "Unable to locate Tauri configuration at $taurConfJson"
+          }
+
+          $signTool = Get-Command "signtool.exe" -ErrorAction SilentlyContinue
+          if ($signTool) {
+            $signToolPath = Split-Path $signTool
+          } else {
+            if (Test-Path -path "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22000.0\x64\signtool.exe") {
+              $signToolpath = "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22000.0\x64"
+            } else {
+              Write-Host "Searching for signtool.exe in C:\Program Files (x86)"
+              $signtoolMatches = Get-Childitem –Path "C:\Program Files (x86)" -Include signtool.exe -File -Recurse -ErrorAction SilentlyContinue
+              if ($signtoolMatches.Length -gt 0) {
+                $signToolPath = Split-path $signtoolMatches[0].FullName
+              } else {
+                Write-Host "Searching for signtool.exe in C:\Program Files"
+                $signtoolMatches = Get-Childitem –Path "C:\Program Files" -Include signtool.exe -File -Recurse -ErrorAction SilentlyContinue
+                if ($signtoolMatches.Length -gt 0) {
+                  $signToolPath = Split-path $signtoolMatches[0].FullName
+                }
+              }
+            }
+          }
+
+          if ($signToolPath) {
+            Write-Host "Appending location of signtool.exe to PATH: $signToolPath"
+            Add-Content $env:GITHUB_PATH $signToolPath
+          } else {
+            Throw "Unable to locate signtool.exe"
+          }
+
+          if (-not(Test-Path -path $tempFolderPath)) {
+              New-Item -Type Directory -Path $tempFolderPath | Out-Null
+              Write-Host "Download Microsoft.Trusted.Signing.Client to $mtscName"
+              $global:ProgressPreference = "SilentlyContinue"
+              Invoke-WebRequest "https://www.nuget.org/api/v2/package/Microsoft.Trusted.Signing.Client/" -OutFile $mtscName
+              Write-Host "Extracting $mtscName"
+              Expand-Archive $mtscName -Force -DestinationPath $tempFolderPath
+              $global:ProgressPreference = 'Continue'
+          }
+
+          Write-Host "Saving Autheticode digest to $dmdName"
+          $metadata = [PSCustomObject]@{
+              Endpoint               = $env:AZURE_ENDPOINT
+              CodeSigningAccountName = $env:AZURE_CODE_SIGNING_NAME
+              CertificateProfileName = $env:AZURE_CERT_PROFILE_NAME
+          }
+          $metadataAsJson = ConvertTo-Json -Depth 100 $metadata
+          Set-Content -Path $dmdName -Value $metadataAsJson
+
+          $batchName = Join-Path $tempFolderPath "signtool.bat"
+          Set-Content -Path $batchName -Value """$signToolPath"" sign /v /fd SHA256 /tr http://timestamp.acs.microsoft.com /td SHA256 /dlib $dlibName /dmdf $dmdName %1"
+
+          $signCommand = "signtool sign /v /fd SHA256 /tr http://timestamp.acs.microsoft.com /td SHA256 /dlib $dlibName /dmdf $dmdName %1"
+          Write-Host "Updating Windows signCommand in $tauriConfJson to $signCommand"
+          $tauriConfigData = ConvertFrom-Json(Get-Content $tauriConfJson -Raw)
+          $tauriConfigData.bundle.windows | Add-Member -Force -MemberType NoteProperty -Name signCommand -Value $signCommand
+          $tauriConfigDataAsJson = ConvertTo-Json -Depth 100 $tauriConfigData
+          Set-Content -Path $tauriConfJson -Value $tauriConfigDataAsJson
+
+          Write-Host "Login to Azure"
+          az login --service-principal --output none -t $env:AZURE_TENANT_ID -u $env:AZURE_CLIENT_ID -p $env:AZURE_CLIENT_SECRET
+
       - name: install frontend dependencies
         run: npm install
 
