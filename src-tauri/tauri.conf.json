@@ -11,7 +11,10 @@
     "icon": [
       "icons/icon.png",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "signCommand": "trusted-signing-cli -e https://eus.codesigning.azure.net/ -a DylanHenrich -c MessierApps %1"
+    }
   },
   "productName": "StarDelta",
   "version": "2.1.2",
