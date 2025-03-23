@@ -1,0 +1,32 @@
+{
+    "mods": [
+        {
+            "name": "UI Enhancement Pack",
+            "ba2": false,
+            "files": [
+                {
+                    "path": "Interface/mainmenu.swf",
+                    "config": "patches/mainmenu_patch.json"
+                },
+                {
+                    "path": "Interface/inventory.swf",
+                    "config": "patches/inventory_patch.json"
+                }
+            ]
+        },
+        {
+            "name": "Starfield - English",
+            "ba2": true,
+            "files": [
+                {
+                    "path": "Interface/mainmenu.swf",
+                    "config": "patches/ba2_mainmenu_patch.json"
+                },
+                {
+                    "path": "Interface/loadingmenu.swf",
+                    "config": "patches/ba2_loading_patch.json"
+                }
+            ]
+        }
+    ]
+}

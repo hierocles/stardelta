@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="200" height="60" xmlns="http://www.w3.org/2000/svg">
+    <!-- Button background with rounded corners -->
+    <path d="M 10 5
+             h 180
+             a 5 5 0 0 1 5 5
+             v 40
+             a 5 5 0 0 1 -5 5
+             h -180
+             a 5 5 0 0 1 -5 -5
+             v -40
+             a 5 5 0 0 1 5 -5 z"
+          fill="#4a90e2"
+          fill-opacity="0.9"
+          stroke="#2171cd"
+          stroke-width="2"/>
+
+    <!-- Button hover effect overlay -->
+    <path d="M 10 5
+             h 180
+             a 5 5 0 0 1 5 5
+             v 40
+             a 5 5 0 0 1 -5 5
+             h -180
+             a 5 5 0 0 1 -5 -5
+             v -40
+             a 5 5 0 0 1 5 -5 z"
+          fill="white"
+          fill-opacity="0.1"/>
+</svg>

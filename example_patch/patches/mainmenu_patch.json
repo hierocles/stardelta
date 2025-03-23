@@ -1,0 +1,74 @@
+{
+    "file": [
+        {
+            "source": "shapes/custom_button.svg",
+            "shapes": [1234, 5678]
+        },
+        {
+            "source": "shapes/menu_background.svg",
+            "shapes": [9012]
+        }
+    ],
+    "transparent": [2468, 1357],
+    "actionscript": [
+        {
+            "source_file": "scripts/CustomButton.as",
+            "insert_mode": "replace",
+            "class_name": "ButtonBase",
+            "package_name": "com.ui.components"
+        },
+        {
+            "source_file": "scripts/NewFeature.as",
+            "insert_mode": "add",
+            "package_name": "com.ui.features"
+        }
+    ],
+    "swf": {
+        "bounds": {
+            "x": {
+                "min": -1000,
+                "max": 1000
+            },
+            "y": {
+                "min": -1000,
+                "max": 1000
+            }
+        },
+        "modifications": [
+            {
+                "tag": "FileAttributesTag",
+                "id": 0,
+                "properties": {
+                    "actionScript3": true,
+                    "hasMetadata": true,
+                    "useNetwork": false,
+                    "useGPU": true
+                }
+            },
+            {
+                "tag": "SetBackgroundColorTag",
+                "id": 0,
+                "properties": {
+                    "backgroundColor": {
+                        "r": 32,
+                        "g": 32,
+                        "b": 32,
+                        "a": 255
+                    }
+                }
+            },
+            {
+                "tag": "SymbolClassTag",
+                "id": 0,
+                "properties": {
+                    "symbols": [
+                        {
+                            "id": 1234,
+                            "name": "CustomButton"
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+}

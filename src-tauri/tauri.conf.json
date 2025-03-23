@@ -12,9 +12,9 @@
       "icons/icon.png",
       "icons/icon.ico"
     ],
-    "windows": {
-      "signCommand": ""
-    }
+    "resources": [
+      "resources/*"
+    ]
   },
   "productName": "StarDelta",
   "version": "2.1.2",

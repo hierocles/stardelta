@@ -1,0 +1,45 @@
+{
+    "file": [
+        {
+            "source": "shapes/inventory_grid.svg",
+            "shapes": [2001, 2002]
+        }
+    ],
+    "transparent": [2010, 2011, 2012],
+    "actionscript": [
+        {
+            "source_file": "scripts/InventoryList.as",
+            "insert_mode": "replace",
+            "class_name": "InventoryList",
+            "package_name": "com.ui.inventory"
+        }
+    ],
+    "swf": {
+        "modifications": [
+            {
+                "tag": "FileAttributesTag",
+                "id": 0,
+                "properties": {
+                    "actionScript3": true,
+                    "hasMetadata": true,
+                    "useNetwork": false,
+                    "useGPU": true
+                }
+            },
+            {
+                "tag": "PlaceObjectTag",
+                "id": 2001,
+                "properties": {
+                    "matrix": {
+                        "scaleX": 1.0,
+                        "scaleY": 1.0,
+                        "rotateSkew0": 0,
+                        "rotateSkew1": 0,
+                        "translateX": 50,
+                        "translateY": 50
+                    }
+                }
+            }
+        ]
+    }
+}

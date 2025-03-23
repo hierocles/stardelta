@@ -35,6 +35,7 @@ svgtypes = "0.15.3"  # For SVG parsing
 xmlparser = "0.13.5"  # XML parsing for SVG
 swf-fixed = "0.1.5"
 ba2 = "3.0.1"
+tempfile = "3.8.1"  # For temporary file handling
 
 [features]
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!
