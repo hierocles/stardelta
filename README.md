@@ -38,6 +38,7 @@ You can patch SWF files either individually or in batch.
 4. Click "Patch Files"
 
 ### Video Instructions (YouTube)
+
 [![Watch the video](https://i.ytimg.com/an_webp/HrRikA1y2go/mqdefault_6s.webp?du=3000&sqp=COa5pL0G&rs=AOn4CLD52Ea1JMJYklsO-YRUUksc-sEZ9A)](https://youtu.be/HrRikA1y2go?si=zcIAlfGyJ9Z9JZt3)
 
 #### Installing Patched Files

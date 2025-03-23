@@ -97,6 +97,9 @@ pub struct NewElements {
     pub shapes: Option<Vec<NewShape>>,
     pub sprites: Option<Vec<NewSprite>>,
     pub texts: Option<Vec<NewText>>,
+    pub bitmaps: Option<Vec<NewBitmap>>,
+    pub buttons: Option<Vec<NewButton>>,
+    pub scenes: Option<Vec<NewScene>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -140,11 +143,28 @@ pub struct RemoveElements {
     pub sprites: Option<Vec<u16>>,     // Sprite IDs to remove
     pub texts: Option<Vec<u16>>,       // Text IDs to remove
     pub buttons: Option<Vec<u16>>,     // Button IDs to remove
-    pub sounds: Option<Vec<u16>>,      // Sound IDs to remove
     pub bitmaps: Option<Vec<u16>>,     // Bitmap IDs to remove
-    pub fonts: Option<Vec<u16>>,       // Font IDs to remove
     pub frames: Option<Vec<String>>,   // Frame labels to remove
     pub scenes: Option<Vec<String>>,   // Scene names to remove
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NewBitmap {
+    pub id: Option<u16>,
+    pub width: u16,
+    pub height: u16,
+    pub data: Vec<u8>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NewButton {
+    pub states: Vec<swf_types::tags::DefineButton>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NewScene {
+    pub name: String,
+    pub offset: u32,
 }
 
 fn read_swf_file(path: &str) -> Result<Vec<u8>, String> {
@@ -237,19 +257,16 @@ pub fn apply_json_modifications(
     // Handle new elements from the root config if present
     if let Some(new_elements) = &config.new_elements {
         println!("Applying new elements from root config...");
-        if let Some(shapes) = &new_elements.shapes {
-            add_new_shapes(&mut movie, shapes, Path::new(&config_json_path))?;
-        }
-        if let Some(sprites) = &new_elements.sprites {
-            add_new_sprites(&mut movie, sprites)?;
-        }
-        if let Some(texts) = &new_elements.texts {
-            add_new_texts(&mut movie, texts)?;
-        }
+        add_new_elements(&mut movie, new_elements)?;
     }
 
-    // Handle element removal if present
+    // Handle element removal from both root config and swf config
+    if let Some(remove_elements) = &config.remove_elements {
+        println!("Applying element removal from root config...");
+        remove_swf_elements(&mut movie, remove_elements)?;
+    }
     if let Some(remove_elements) = &config.swf.remove_elements {
+        println!("Applying element removal from swf config...");
         remove_swf_elements(&mut movie, remove_elements)?;
     }
 
@@ -1082,7 +1099,6 @@ fn find_next_available_id(movie: &Movie) -> u16 {
             Tag::DefineButton(button) => max_id = max_id.max(button.id),
             Tag::DefineMorphShape(shape) => max_id = max_id.max(shape.id),
             Tag::DefineBitmap(bitmap) => max_id = max_id.max(bitmap.id),
-            Tag::DefineFont(font) => max_id = max_id.max(font.id),
             _ => {}
         }
     }
@@ -1212,6 +1228,162 @@ fn add_new_texts(movie: &mut Movie, texts: &[NewText]) -> Result<(), String> {
     Ok(())
 }
 
+fn add_new_elements(movie: &mut Movie, elements: &NewElements) -> Result<(), String> {
+    if let Some(bitmaps) = &elements.bitmaps {
+        for bitmap in bitmaps {
+            let bitmap_id = bitmap.id.unwrap_or_else(|| find_next_available_id(movie));
+            let bitmap_tag = Tag::DefineBitmap(swf_types::tags::DefineBitmap {
+                id: bitmap_id,
+                width: bitmap.width,
+                height: bitmap.height,
+                media_type: swf_types::ImageType::Png,  // Use the re-exported ImageType
+                data: bitmap.data.clone(),
+            });
+            movie.tags.push(bitmap_tag);
+        }
+    }
+
+    if let Some(buttons) = &elements.buttons {
+        for button in buttons {
+            for state in &button.states {
+                let button_tag = Tag::DefineButton(state.clone());
+                movie.tags.push(button_tag);
+            }
+        }
+    }
+
+    if let Some(scenes) = &elements.scenes {
+        // Find or create the scene data tag
+        let mut scene_data_tag = None;
+        for tag in &mut movie.tags {
+            if let Tag::DefineSceneAndFrameLabelData(data) = tag {
+                scene_data_tag = Some(data);
+                break;
+            }
+        }
+
+        if let Some(data) = scene_data_tag {
+            for scene in scenes {
+                data.scenes.push(swf_types::Scene {
+                    name: scene.name.clone(),
+                    offset: scene.offset,
+                });
+            }
+        } else {
+            // Create new scene data tag if none exists
+            let new_scenes: Vec<_> = scenes.iter()
+                .map(|s| swf_types::Scene {
+                    name: s.name.clone(),
+                    offset: s.offset,
+                })
+                .collect();
+
+            movie.tags.push(Tag::DefineSceneAndFrameLabelData(
+                swf_types::tags::DefineSceneAndFrameLabelData {
+                    scenes: new_scenes,
+                    labels: Vec::new(),
+                }
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn remove_swf_elements(movie: &mut Movie, elements: &RemoveElements) -> Result<(), String> {
+    println!("Starting element removal process...");
+
+    // Create a set of IDs to remove for each type
+    let shape_ids: std::collections::HashSet<_> = elements.shapes.as_ref().map(|v| v.iter().copied().collect()).unwrap_or_default();
+    let sprite_ids: std::collections::HashSet<_> = elements.sprites.as_ref().map(|v| v.iter().copied().collect()).unwrap_or_default();
+    let text_ids: std::collections::HashSet<_> = elements.texts.as_ref().map(|v| v.iter().copied().collect()).unwrap_or_default();
+    let button_ids: std::collections::HashSet<_> = elements.buttons.as_ref().map(|v| v.iter().copied().collect()).unwrap_or_default();
+    let bitmap_ids: std::collections::HashSet<_> = elements.bitmaps.as_ref().map(|v| v.iter().copied().collect()).unwrap_or_default();
+    let frame_labels: std::collections::HashSet<_> = elements.frames.as_ref().map(|v| v.iter().cloned().collect()).unwrap_or_default();
+    let scene_names: std::collections::HashSet<_> = elements.scenes.as_ref().map(|v| v.iter().cloned().collect()).unwrap_or_default();
+
+    // First pass: Remove all references to the elements in the main timeline
+    movie.tags.retain(|tag| {
+        match tag {
+            Tag::PlaceObject(place) => {
+                let char_id = place.character_id.unwrap_or(0);
+                !shape_ids.contains(&char_id) &&
+                !sprite_ids.contains(&char_id) &&
+                !text_ids.contains(&char_id) &&
+                !button_ids.contains(&char_id) &&
+                !bitmap_ids.contains(&char_id)
+            },
+            Tag::FrameLabel(label) => !frame_labels.contains(&label.name),
+            _ => true
+        }
+    });
+
+    // Second pass: Remove the actual element definitions
+    movie.tags.retain(|tag| {
+        match tag {
+            Tag::DefineShape(shape) => !shape_ids.contains(&shape.id),
+            Tag::DefineSprite(sprite) => !sprite_ids.contains(&sprite.id),
+            Tag::DefineText(text) => !text_ids.contains(&text.id),
+            Tag::DefineDynamicText(text) => !text_ids.contains(&text.id),
+            Tag::DefineButton(button) => !button_ids.contains(&button.id),
+            Tag::DefineBitmap(bitmap) => !bitmap_ids.contains(&bitmap.id),
+            Tag::DefineSceneAndFrameLabelData(data) => {
+                // For scene data, we'll keep the tag but filter its contents if needed
+                if scene_names.is_empty() {
+                    true
+                } else {
+                    // Create a filtered copy of scenes
+                    let filtered_scenes = data.scenes
+                        .iter()
+                        .filter(|scene| !scene_names.contains(&scene.name))
+                        .cloned()
+                        .collect::<Vec<_>>();
+
+                    // Only keep if we have scenes or labels
+                    !filtered_scenes.is_empty() || !data.labels.is_empty()
+                }
+            },
+            _ => true
+        }
+    });
+
+    // Update scene data with filtered scenes
+    if !scene_names.is_empty() {
+        for tag in &mut movie.tags {
+            if let Tag::DefineSceneAndFrameLabelData(data) = tag {
+                data.scenes = data.scenes
+                    .iter()
+                    .filter(|scene| !scene_names.contains(&scene.name))
+                    .cloned()
+                    .collect();
+            }
+        }
+    }
+
+    // Clean up any references to removed elements in sprite tags
+    for tag in &mut movie.tags {
+        if let Tag::DefineSprite(sprite) = tag {
+            sprite.tags.retain(|tag| {
+                match tag {
+                    Tag::PlaceObject(place) => {
+                        let char_id = place.character_id.unwrap_or(0);
+                        !shape_ids.contains(&char_id) &&
+                        !sprite_ids.contains(&char_id) &&
+                        !text_ids.contains(&char_id) &&
+                        !button_ids.contains(&char_id) &&
+                        !bitmap_ids.contains(&char_id)
+                    },
+                    Tag::FrameLabel(label) => !frame_labels.contains(&label.name),
+                    _ => true
+                }
+            });
+        }
+    }
+
+    println!("Element removal completed successfully");
+    Ok(())
+}
+
 fn apply_modifications(movie: &mut Movie, config: &SwfModification, config_path: &Path) -> Result<(), String> {
     if let Some(bounds) = &config.bounds {
         movie.header.frame_size.x_min = bounds.x.min;
@@ -1275,42 +1447,10 @@ fn apply_tag_modification(movie: &mut Movie, modification: &TagModification) -> 
                         .map_err(|e| format!("Failed to parse color transform: {}", e))?;
                 }
             }
-            (Tag::DefineButtonSound(tag), "DefineButtonSoundTag")
-                if tag.button_id == modification.id =>
-            {
-                if let Some(over_up_to_idle) = modification.properties.get("overUpToIdle") {
-                    tag.over_up_to_idle = serde_json::from_value(over_up_to_idle.clone())
-                        .map_err(|e| format!("Failed to parse over_up_to_idle sound: {}", e))?;
-                }
-                if let Some(idle_to_over_up) = modification.properties.get("idleToOverUp") {
-                    tag.idle_to_over_up = serde_json::from_value(idle_to_over_up.clone())
-                        .map_err(|e| format!("Failed to parse idle_to_over_up sound: {}", e))?;
-                }
-                if let Some(over_up_to_over_down) = modification.properties.get("overUpToOverDown")
-                {
-                    tag.over_up_to_over_down = serde_json::from_value(over_up_to_over_down.clone())
-                        .map_err(|e| {
-                            format!("Failed to parse over_up_to_over_down sound: {}", e)
-                        })?;
-                }
-                if let Some(over_down_to_over_up) = modification.properties.get("overDownToOverUp")
-                {
-                    tag.over_down_to_over_up = serde_json::from_value(over_down_to_over_up.clone())
-                        .map_err(|e| {
-                            format!("Failed to parse over_down_to_over_up sound: {}", e)
-                        })?;
-                }
-            }
             (Tag::DefineDynamicText(tag), "DefineDynamicTextTag") if tag.id == modification.id => {
                 if let Some(text) = modification.properties.get("text") {
                     tag.text = serde_json::from_value(text.clone())
                         .map_err(|e| format!("Failed to parse dynamic text: {}", e))?;
-                }
-            }
-            (Tag::DefineFont(tag), "DefineFontTag") if tag.id == modification.id => {
-                if let Some(glyphs) = modification.properties.get("glyphs") {
-                    tag.glyphs = serde_json::from_value(glyphs.clone())
-                        .map_err(|e| format!("Failed to parse font glyphs: {}", e))?;
                 }
             }
             (Tag::DefineMorphShape(tag), "DefineMorphShapeTag") if tag.id == modification.id => {
@@ -1423,12 +1563,6 @@ fn apply_tag_modification(movie: &mut Movie, modification: &TagModification) -> 
                     };
                 }
             }
-            (Tag::StartSound(tag), "StartSoundTag") => {
-                if let Some(sound_info) = modification.properties.get("soundInfo") {
-                    tag.sound_info = serde_json::from_value(sound_info.clone())
-                        .map_err(|e| format!("Failed to parse sound info: {}", e))?;
-                }
-            }
             (Tag::SymbolClass(tag), "SymbolClassTag") => {
                 if let Some(symbols) = modification.properties.get("symbols") {
                     tag.symbols = serde_json::from_value(symbols.clone())
@@ -1449,90 +1583,6 @@ fn apply_tag_modification(movie: &mut Movie, modification: &TagModification) -> 
             _ => continue,
         }
     }
-    Ok(())
-}
-
-fn remove_swf_elements(movie: &mut Movie, elements: &RemoveElements) -> Result<(), String> {
-    println!("Starting element removal process...");
-
-    // Create a set of IDs to remove for each type
-    let shape_ids: std::collections::HashSet<_> = elements.shapes.as_ref().map(|v| v.iter().copied().collect()).unwrap_or_default();
-    let sprite_ids: std::collections::HashSet<_> = elements.sprites.as_ref().map(|v| v.iter().copied().collect()).unwrap_or_default();
-    let text_ids: std::collections::HashSet<_> = elements.texts.as_ref().map(|v| v.iter().copied().collect()).unwrap_or_default();
-    let button_ids: std::collections::HashSet<_> = elements.buttons.as_ref().map(|v| v.iter().copied().collect()).unwrap_or_default();
-    let sound_ids: std::collections::HashSet<_> = elements.sounds.as_ref().map(|v| v.iter().copied().collect()).unwrap_or_default();
-    let bitmap_ids: std::collections::HashSet<_> = elements.bitmaps.as_ref().map(|v| v.iter().copied().collect()).unwrap_or_default();
-    let font_ids: std::collections::HashSet<_> = elements.fonts.as_ref().map(|v| v.iter().copied().collect()).unwrap_or_default();
-    let frame_labels: std::collections::HashSet<_> = elements.frames.as_ref().map(|v| v.iter().cloned().collect()).unwrap_or_default();
-    let scene_names: std::collections::HashSet<_> = elements.scenes.as_ref().map(|v| v.iter().cloned().collect()).unwrap_or_default();
-
-    // Filter out tags based on their type and ID
-    movie.tags.retain(|tag| {
-        match tag {
-            Tag::DefineShape(shape) => !shape_ids.contains(&shape.id),
-            Tag::DefineSprite(sprite) => !sprite_ids.contains(&sprite.id),
-            Tag::DefineText(text) => !text_ids.contains(&text.id),
-            Tag::DefineDynamicText(text) => !text_ids.contains(&text.id),
-            Tag::DefineButton(button) => !button_ids.contains(&button.id),
-            Tag::DefineSound(sound) => !sound_ids.contains(&sound.id),
-            Tag::DefineBitmap(bitmap) => !bitmap_ids.contains(&bitmap.id),
-            Tag::DefineFont(font) => !font_ids.contains(&font.id),
-            Tag::FrameLabel(label) => !frame_labels.contains(&label.name),
-            Tag::DefineSceneAndFrameLabelData(data) => {
-                // For scene data, we'll keep the tag but filter its contents if needed
-                if scene_names.is_empty() {
-                    true
-                } else {
-                    // Create a filtered copy of scenes
-                    let filtered_scenes = data.scenes
-                        .iter()
-                        .filter(|scene| !scene_names.contains(&scene.name))
-                        .cloned()
-                        .collect::<Vec<_>>();
-
-                    // Only keep if we have scenes or labels
-                    !filtered_scenes.is_empty() || !data.labels.is_empty()
-                }
-            },
-            _ => true
-        }
-    });
-
-    // Update scene data with filtered scenes
-    if !scene_names.is_empty() {
-        for tag in &mut movie.tags {
-            if let Tag::DefineSceneAndFrameLabelData(data) = tag {
-                data.scenes = data.scenes
-                    .iter()
-                    .filter(|scene| !scene_names.contains(&scene.name))
-                    .cloned()
-                    .collect();
-            }
-        }
-    }
-
-    // Clean up any references to removed elements in sprite tags
-    for tag in &mut movie.tags {
-        if let Tag::DefineSprite(sprite) = tag {
-            sprite.tags.retain(|tag| {
-                match tag {
-                    Tag::PlaceObject(place) => {
-                        // Remove placement of removed elements
-                        !shape_ids.contains(&place.character_id.unwrap_or(0)) &&
-                        !sprite_ids.contains(&place.character_id.unwrap_or(0)) &&
-                        !text_ids.contains(&place.character_id.unwrap_or(0)) &&
-                        !button_ids.contains(&place.character_id.unwrap_or(0)) &&
-                        !bitmap_ids.contains(&place.character_id.unwrap_or(0))
-                    },
-                    Tag::StartSound(sound) => !sound_ids.contains(&sound.sound_id),
-                    Tag::FrameLabel(label) => !frame_labels.contains(&label.name),
-                    _ => true
-                }
-            });
-        }
-    }
-
-    println!("Element removal completed successfully");
     Ok(())
 }
 
@@ -1595,17 +1645,7 @@ fn apply_transparency(movie: &mut Movie, shape_ids: &[u16]) -> Result<(), String
         movie.header.swf_version = 8;
     }
 
-    // First pass: Fix any dynamic text tags to ensure they have both font_class and font_size
-    for tag in &mut movie.tags {
-        if let Tag::DefineDynamicText(text) = tag {
-            if text.font_class.is_some() && text.font_size.is_none() {
-                // If we have a font class but no size, set a default size
-                text.font_size = Some(12);
-            }
-        }
-    }
-
-    // Second pass: Handle shape transparency
+    // Handle shape transparency
     for &shape_id in shape_ids {
         println!("Making shape {} transparent", shape_id);
 
