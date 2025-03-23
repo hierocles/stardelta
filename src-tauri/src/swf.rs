@@ -27,6 +27,7 @@ pub struct ModificationConfig {
     pub swf: SwfModification,
     pub new_elements: Option<NewElements>,  // New field for adding elements
     pub remove_elements: Option<RemoveElements>,  // New field for removing elements
+    pub bitmaps: Option<Vec<BitmapReplacement>>,  // New field for bitmap replacements
 }
 
 #[derive(Debug, Deserialize)]
@@ -193,6 +194,23 @@ pub enum ActionScriptInsertMode {
     Replace  // Replace an existing script with matching class name
 }
 
+#[derive(Debug, Deserialize)]
+pub struct BitmapReplacement {
+    pub id: u16,                    // The ID of the bitmap to replace
+    pub source: String,             // Path to the source image file
+    pub format: Option<ImageFormat>, // Optional format override
+    pub quality: Option<u8>,        // Optional JPEG quality (1-100)
+    pub preserve_alpha: Option<bool>, // Whether to preserve alpha channel
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageFormat {
+    Jpeg,
+    Png,
+    Gif,
+}
+
 fn read_swf_file(path: &str) -> Result<Vec<u8>, String> {
     if is_ba2_path(path) {
         if let Some(ba2_path) = Ba2Path::from_string(path) {
@@ -261,6 +279,15 @@ pub fn apply_json_modifications(
         if let Err(e) = apply_transparency(&mut movie, transparent_shapes) {
             println!("Error applying transparency: {}", e);
             return Err(format!("Failed to apply transparency: {}", e));
+        }
+    }
+
+    // Apply bitmap replacements if specified
+    if let Some(bitmap_replacements) = &config.bitmaps {
+        println!("Applying bitmap replacements...");
+        if let Err(e) = apply_bitmap_replacements(&mut movie, bitmap_replacements, Path::new(&config_json_path)) {
+            println!("Error applying bitmap replacements: {}", e);
+            return Err(format!("Failed to apply bitmap replacements: {}", e));
         }
     }
 
@@ -2161,4 +2188,63 @@ fn compile_with_jpexs(handle: AppHandle, as_path: &Path, swf_path: &Path) -> Res
     }
 
     Err("No ABC tag found in compiled SWF".to_string())
+}
+
+fn apply_bitmap_replacements(movie: &mut Movie, replacements: &[BitmapReplacement], config_path: &Path) -> Result<(), String> {
+    println!("Applying bitmap replacements...");
+
+    // Get the config file's directory for resolving relative paths
+    let config_dir = config_path
+        .parent()
+        .ok_or_else(|| "Could not determine config file directory".to_string())?;
+
+    for replacement in replacements {
+        println!("Processing bitmap replacement for ID: {}", replacement.id);
+
+        // Resolve the source path relative to the config file's directory
+        let source_path = config_dir.join(&replacement.source);
+
+        // Read the source image file
+        let image_data = fs::read(&source_path)
+            .map_err(|e| format!("Failed to read image file '{}': {}", replacement.source, e))?;
+
+        // Determine the image format
+        let format = if let Some(fmt) = &replacement.format {
+            match fmt {
+                ImageFormat::Jpeg => swf_types::ImageType::Jpeg,
+                ImageFormat::Png => swf_types::ImageType::Png,
+                ImageFormat::Gif => swf_types::ImageType::Gif,
+            }
+        } else {
+            // Auto-detect format from file extension
+            match source_path.extension().and_then(|e| e.to_str()) {
+                Some("jpg") | Some("jpeg") => swf_types::ImageType::Jpeg,
+                Some("png") => swf_types::ImageType::Png,
+                Some("gif") => swf_types::ImageType::Gif,
+                _ => return Err(format!("Unsupported image format for file: {}", replacement.source)),
+            }
+        };
+
+        // Find and replace the bitmap tag
+        let mut found = false;
+        for tag in &mut movie.tags {
+            match tag {
+                Tag::DefineBitmap(bitmap_tag) if bitmap_tag.id == replacement.id => {
+                    // Update the bitmap tag with new data
+                    bitmap_tag.media_type = format;
+                    bitmap_tag.data = image_data;
+                    found = true;
+                    println!("Replaced bitmap with ID: {}", replacement.id);
+                    break;
+                }
+                _ => continue,
+            }
+        }
+
+        if !found {
+            return Err(format!("Bitmap with ID {} not found", replacement.id));
+        }
+    }
+
+    Ok(())
 }
