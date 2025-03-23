@@ -14,10 +14,13 @@
     ],
     "resources": [
       "resources/*"
-    ]
+    ],
+    "windows": {
+      "signCommand": ""
+    }
   },
   "productName": "StarDelta",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "identifier": "com.stardelta.app",
   "plugins": {
   },

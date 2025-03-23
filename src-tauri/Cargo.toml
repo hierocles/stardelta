@@ -1,6 +1,6 @@
 [package]
 name = "stardelta"
-version = "2.1.1"
+version = "2.1.2"
 description = "Delta patcher for Starfield UIs"
 authors = ["Dylan Henrich"]
 edition = "2021"
@@ -29,7 +29,7 @@ tauri-plugin-decorum = "1.1.1"
 swf-parser = "0.14.0"
 swf-emitter = { git = "https://github.com/hierocles/swf-emitter", branch = "implement-import-assets" }
 swf-types = "0.14.0"
-usvg = "0.44.0"
+usvg = "0.45.0"
 kurbo = "0.11.1"  # For path operations
 svgtypes = "0.15.3"  # For SVG parsing
 xmlparser = "0.13.5"  # XML parsing for SVG

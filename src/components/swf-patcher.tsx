@@ -268,6 +268,7 @@ export function SwfPatcher() {
           config_file: batchConfigPath,
           output_directory: batchOutputDir,
           ba2_path: selectedBa2Path || undefined,
+          swf_mappings: swfMappings
         }
       })
 
