@@ -15,7 +15,7 @@ import { toast } from "sonner"
 import { Window, PhysicalSize } from "@tauri-apps/api/window"
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024 // 100MB
-const PATCH_EXTENSIONS = ["vcdiff", "xdelta", "xdelta3"]
+const PATCH_EXTENSIONS = ["vcdiff", "xdelta", "xdelta3", "patch"]
 
 export function XdeltaPatcher() {
   // End-user states
