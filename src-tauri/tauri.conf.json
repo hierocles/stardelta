@@ -14,10 +14,7 @@
     ],
     "resources": [
       "resources/*"
-    ],
-    "windows": {
-      "signCommand": ""
-    }
+    ]
   },
   "productName": "StarDelta",
   "version": "2.1.2",

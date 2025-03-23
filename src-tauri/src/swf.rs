@@ -170,6 +170,29 @@ pub struct NewScene {
     pub offset: u32,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ActionScriptPatch {
+    pub source_file: String,           // Path to the ActionScript source file
+    pub insert_mode: ActionScriptInsertMode,  // How to insert the script
+    pub class_name: Option<String>,    // Optional class name for replacement
+    pub package_name: Option<String>,  // Optional package name
+    pub symbol_bindings: Option<Vec<SymbolBinding>>,  // Optional symbol class bindings
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SymbolBinding {
+    pub symbol_id: u16,                // The ID of the symbol (shape, sprite, etc.)
+    pub class_name: String,            // The fully qualified class name to bind to
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+#[derive(PartialEq)]
+pub enum ActionScriptInsertMode {
+    Add,     // Add the script as a new DoABC tag
+    Replace  // Replace an existing script with matching class name
+}
+
 fn read_swf_file(path: &str) -> Result<Vec<u8>, String> {
     if is_ba2_path(path) {
         if let Some(ba2_path) = Ba2Path::from_string(path) {
@@ -1950,8 +1973,6 @@ fn apply_actionscript_patches(movie: &mut Movie, patches: &[ActionScriptPatch], 
                     let mut found = false;
                     for tag in &mut movie.tags {
                         if let Tag::DoAbc(abc_tag) = tag {
-                            // TODO: In the future, we could parse ABC data to verify class name
-                            // For now, we'll replace based on the presence of the class name in the data
                             if contains_class_name(&abc_tag.data, class_name) {
                                 *tag = new_tag.clone();
                                 found = true;
@@ -1977,6 +1998,55 @@ fn apply_actionscript_patches(movie: &mut Movie, patches: &[ActionScriptPatch], 
                     }
                 }
             },
+        }
+
+        // Handle symbol class bindings if present
+        if let Some(bindings) = &patch.symbol_bindings {
+            // Find or create a SymbolClass tag
+            let mut symbol_class_tag = None;
+            for tag in &mut movie.tags {
+                if let Tag::SymbolClass(symbol_tag) = tag {
+                    symbol_class_tag = Some(symbol_tag);
+                    break;
+                }
+            }
+
+            // Create new symbol bindings
+            let mut new_symbols = Vec::new();
+            if let Some(symbol_tag) = symbol_class_tag {
+                // Keep existing bindings that aren't being replaced
+                for binding in &symbol_tag.symbols {
+                    if !bindings.iter().any(|b| b.symbol_id == binding.id) {
+                        new_symbols.push(binding.clone());
+                    }
+                }
+            }
+
+            // Add new bindings
+            for binding in bindings {
+                new_symbols.push(swf_types::NamedId {
+                    id: binding.symbol_id,
+                    name: binding.class_name.clone(),
+                });
+            }
+
+            // Create or update the SymbolClass tag
+            let symbol_class_tag = Tag::SymbolClass(swf_types::tags::SymbolClass {
+                symbols: new_symbols,
+            });
+
+            // Replace existing tag or add new one
+            let mut found = false;
+            for tag in &mut movie.tags {
+                if let Tag::SymbolClass(_) = tag {
+                    *tag = symbol_class_tag.clone();
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                movie.tags.push(symbol_class_tag);
+            }
         }
     }
 
