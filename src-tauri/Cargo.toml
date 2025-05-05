@@ -29,13 +29,13 @@ tauri-plugin-decorum = "1.1.1"
 swf-parser = "0.14.0"
 swf-emitter = { git = "https://github.com/hierocles/swf-emitter", branch = "implement-import-assets" }
 swf-types = "0.14.0"
-usvg = "0.45.0"
-kurbo = "0.11.1"  # For path operations
+usvg = "0.45.1"
+kurbo = "0.11.2"  # For path operations
 svgtypes = "0.15.3"  # For SVG parsing
 xmlparser = "0.13.5"  # XML parsing for SVG
 swf-fixed = "0.1.5"
 ba2 = "3.0.1"
-tempfile = "3.8.1"  # For temporary file handling
+tempfile = "3.19.1"  # For temporary file handling
 
 [features]
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!
