@@ -27,7 +27,7 @@ tauri-plugin-devtools = "2.0.0"
 tauri-plugin-devtools-app = "2.0.0"
 tauri-plugin-decorum = "1.1.1"
 swf-parser = "0.14.0"
-swf-emitter = { git = "https://github.com/hierocles/swf-emitter", branch = "implement-import-assets" }
+swf-emitter = { path = "../vendor/swf-emitter/rs" }
 swf-types = "0.14.0"
 usvg = "0.45.0"
 kurbo = "0.11.1"  # For path operations

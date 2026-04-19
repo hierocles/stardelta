@@ -4962,7 +4962,6 @@ dependencies = [
 [[package]]
 name = "swf-emitter"
 version = "0.14.0"
-source = "git+https://github.com/hierocles/swf-emitter?branch=implement-import-assets#adabdb46caf9274962ea2275373672186f773bb8"
 dependencies = [
  "byteorder",
  "half",

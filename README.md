@@ -97,48 +97,45 @@ Note: Only SVG files are supported for the source. SVG files should be placed in
 
 ### SWF
 
-The swf operation is used to modify the SWF file's attributes. Supported tags are defined in the [open-flash/swf-types](https://github.com/open-flash/swf-types) repository.
+The swf operation is used to modify the SWF file's attributes. Tag shapes match [open-flash/swf-types](https://github.com/open-flash/swf-types) (the same types used when you export a SWF to JSON). The binary stack is **swf-parser** 0.14 plus a **vendored** [swf-emitter](https://github.com/open-flash/swf-emitter) copy under [`vendor/swf-emitter/`](vendor/swf-emitter/) (see [`docs/dependency-ceiling.md`](docs/dependency-ceiling.md)).
 
-SWF tags must conform to the [SWF 19.0 specification](https://open-flash.github.io/mirrors/swf-spec-19.pdf). Any tags that are not supported will cause an error or unexpected behavior. Tag properties must also conform to the specification.
+SWF tags must conform to the [SWF 19.0 specification](https://open-flash.github.io/mirrors/swf-spec-19.pdf). What actually works in practice is limited by that parser/emitter pair; unknown or edge-case tags may still be represented as raw bytes.
+
+**Two JSON dialects:** (1) **Exported Movie JSON** from “Convert SWF to JSON” uses `serde` field names from `swf-types` (for example `Tag` values use a `"type"` field such as `"DefineShape"`). (2) **Patch files** use the `tag` strings below with a `Tag` suffix (e.g. `"DefineShapeTag"`). The `properties` object is merged into the matching struct; use an exported file as the reference for exact property names and shapes.
 
 Each tag modification must include:
 
-- `tag`: The tag type name (e.g., "DefineShapeTag", "DefineEditTextTag")
-- `id`: The unique identifier for the tag (except for some tags like FileAttributesTag)
-- `properties`: Object containing the properties to modify, which vary by tag type
+- `tag`: The tag type name (e.g., `"DefineShapeTag"`, `"DefineDynamicTextTag"`)
+- `id`: The unique identifier for the tag where applicable (use `0` for tags without a character id, such as `FileAttributesTag`)
+- `properties`: Object with fields to merge into that tag (partial updates are supported for nested objects)
+
+Optional disambiguation (when multiple tags share the same type on the timeline):
+
+- `tag_index`: 0-based index into the root `tags` array; applies only that tag (must match `tag`)
+- `depth` / `character_id`: For `PlaceObjectTag` and `RemoveObjectTag`, limit matches to that depth or character id
+- `frame_label_name`: For `FrameLabelTag`, match only the label with this `name`
 
 #### Common Tag Types
 
 Here are some commonly used tag types and their properties:
 
-**DefineEditTextTag** - Modifies text fields
+**DefineDynamicTextTag** — Editable text (`DefineDynamicText` in swf-types; Flash “edit text”)
 
 ```json
 {
-  "tag": "DefineEditTextTag",
+  "tag": "DefineDynamicTextTag",
   "id": 5,
   "properties": {
-    "bounds": {
-      "x_min": 0,
-      "x_max": 100,
-      "y_min": 0,
-      "y_max": 20
-    },
-    "font_id": 3,
-    "font_class": "Arial",
+    "text": "Hello World",
     "font_size": 12,
-    "color": {
-      "type": "RGB",
-      "red": 16,
-      "green": 22,
-      "blue": 32
-    },
-    "text": "Hello World"
+    "font_class": "Arial"
   }
 }
 ```
 
-**DefineShapeTag** - Modifies shapes
+Export the SWF to JSON to copy accurate `bounds`, `color`, and flag fields for your file.
+
+**DefineShapeTag** — Updates a shape definition. Prefer copying the `DefineShape` object from an exported Movie JSON and merging only the fields you need under `properties` (the struct contains `bounds`, `edge_bounds`, and `shape` with `records` and `initial_styles`).
 
 ```json
 {
@@ -150,20 +147,6 @@ Here are some commonly used tag types and their properties:
       "x_max": 100,
       "y_min": 0,
       "y_max": 100
-    },
-    "styles": {
-      "fill": [
-        {
-          "type": "solid",
-          "color": {
-            "type": "RGB",
-            "red": 255,
-            "green": 0,
-            "blue": 0
-          }
-        }
-      ],
-      "line": []
     }
   }
 }

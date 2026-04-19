@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod swf;
+mod swf_tag_merge;
 mod xdelta;
 mod ba2;
 

@@ -1,0 +1,77 @@
+{
+  "name": "swf-emitter",
+  "version": "0.14.0",
+  "description": "SWF files emitter",
+  "licenses": [
+    {
+      "type": "AGPL-3.0-or-later",
+      "url": "https://spdx.org/licenses/AGPL-3.0-or-later.html"
+    }
+  ],
+  "keywords": [
+    "swf",
+    "emitter"
+  ],
+  "homepage": "https://github.com/open-flash/swf-emitter",
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:open-flash/swf-emitter.git"
+  },
+  "scripts": {
+    "clean": "rimraf \"./@(coverage|lib|main|test)\"",
+    "lint": "eslint \"./src/**/*.mts\"",
+    "format": "eslint --fix \"./src/**/*.mts\"",
+    "build": "tsc --build src/lib/tsconfig.json",
+    "prepack": "yarn run build",
+    "test:build": "tsc --build src/test/tsconfig.json",
+    "test": "yarn run test:build && c8 mocha \"test/**/*.spec.mjs\"",
+    "main:build": "tsc --build src/main/tsconfig.json",
+    "start": "yarn run main:build && node ./main/main.mjs"
+  },
+  "engines": {
+    "node": ">=14.13.1"
+  },
+  "packageManager": "yarn@4.0.0-rc.4",
+  "dependencies": {
+    "@open-flash/stream": "^0.5.0",
+    "incident": "^3.2.1",
+    "semantic-types": "^0.1.1",
+    "swf-types": "^0.14.0"
+  },
+  "devDependencies": {
+    "@types/chai": "^4.3.1",
+    "@types/mocha": "^9.1.1",
+    "@types/node": "^17.0.31",
+    "@typescript-eslint/eslint-plugin": "^5.22.0",
+    "@typescript-eslint/parser": "^5.22.0",
+    "c8": "^7.11.2",
+    "chai": "^4.3.6",
+    "eslint": "^8.15.0",
+    "eslint-plugin-simple-import-sort": "^7.0.0",
+    "furi": "^2.0.0",
+    "kryo": "^0.14.0",
+    "kryo-json": "^0.14.0",
+    "mocha": "^10.0.0",
+    "rimraf": "^3.0.2",
+    "swf-parser": "^0.14.1",
+    "typescript": "=4.7.0-beta"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./lib/index.mjs",
+    "./*": "./lib/*.mjs"
+  },
+  "files": [
+    "./lib/**/*.(mjs|map|mts)",
+    "./src/lib/**/*.mts"
+  ],
+  "c8": {
+    "reportDir": "./coverage",
+    "reporter": [
+      "lcov"
+    ],
+    "include": [
+      "lib/**/*"
+    ]
+  }
+}

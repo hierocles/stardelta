@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": ".",
+    "outDir": "../../test"
+  },
+  "include": [
+    "**/*.mts"
+  ],
+  "exclude": [],
+  "references": [
+    {
+      "path": "../lib"
+    }
+  ]
+}

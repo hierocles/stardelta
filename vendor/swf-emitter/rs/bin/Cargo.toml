@@ -1,0 +1,22 @@
+[package]
+name = "swf-emitter-bin"
+version = "0.1.0"
+authors = ["Charles Samborski <demurgos@demurgos.net>"]
+description = "SWF emitter"
+documentation = "https://github.com/open-flash/swf-emitter"
+homepage = "https://github.com/open-flash/swf-emitter"
+repository = "https://github.com/open-flash/swf-emitter"
+readme = "../README.md"
+keywords = ["emitter", "swf", "flash"]
+license = "AGPL-3.0-or-later"
+edition = "2021"
+rust-version = "1.60.0"
+
+[[bin]]
+name = "swf-emitter"
+path = "src/main.rs"
+
+[dependencies]
+serde_json_v8 = "^0.1.1"
+swf-emitter = { path = "../." }
+swf-types = "^0.14.0"

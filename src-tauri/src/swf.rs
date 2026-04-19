@@ -8,7 +8,7 @@ use svgtypes::{Color, PathParser, PathSegment, Transform};
 use swf_emitter::emit_swf;
 use swf_parser::parse_swf;
 use swf_types::{
-    fill_styles, shape_records, CapStyle, FillStyle, JoinStyle, LineStyle, Movie, Rect, SRgb8,
+    fill_styles, shape_records, CapStyle, FillStyle, JoinStyle, LineStyle, Movie, Rect,
     Shape, ShapeRecord, ShapeStyles, StraightSRgba8, Tag, text, tags,
 };
 use tauri::{command, AppHandle};
@@ -16,6 +16,8 @@ use xmlparser::{Token, Tokenizer};
 use crate::ba2::{Ba2Path, extract_file_from_ba2, is_ba2_path};
 use std::process::Command;
 use tempfile::TempDir;
+
+use crate::swf_tag_merge::{apply_tag_modification, TagModification};
 
 const SWF_SCALE: f32 = 20.0;  // SWF uses 20 twips per pixel, whereas SVG uses 1px per pixel
 
@@ -80,13 +82,6 @@ pub struct Bounds {
 pub struct BoundRange {
     pub min: i32,
     pub max: i32,
-}
-
-#[derive(Debug, Deserialize)]
-struct TagModification {
-    tag: String,
-    id: u16,
-    properties: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize)]
@@ -361,7 +356,9 @@ fn apply_transform(point: Point, transform: &Transform) -> Point {
 
 fn parse_shape_source(path: &Path) -> Result<Vec<Shape>, String> {
     println!("Starting to parse SVG file: {}", path.display());
-    let svg_data = fs::read(path).map_err(|e| format!("Failed to read SVG file: {}", e))?;
+    let svg_data = fs::read(path).map_err(|e| {
+        format!("Failed to read SVG file {}: {}", path.display(), e)
+    })?;
 
     let mut shapes = Vec::new();
     let mut current_shape = Shape {
@@ -1432,7 +1429,7 @@ fn apply_modifications(movie: &mut Movie, config: &SwfModification, config_path:
         apply_tag_modification(movie, modification)?;
     }
 
-    // Handle new elements if present
+    // Handle new elements if present (same behavior as root-level `new_elements` in ModificationConfig)
     if let Some(new_elements) = &config.new_elements {
         if let Some(shapes) = &new_elements.shapes {
             add_new_shapes(movie, shapes, config_path)?;
@@ -1443,6 +1440,7 @@ fn apply_modifications(movie: &mut Movie, config: &SwfModification, config_path:
         if let Some(texts) = &new_elements.texts {
             add_new_texts(movie, texts)?;
         }
+        add_new_elements(movie, new_elements)?;
     }
 
     // Handle element removal if present
@@ -1450,174 +1448,6 @@ fn apply_modifications(movie: &mut Movie, config: &SwfModification, config_path:
         remove_swf_elements(movie, remove_elements)?;
     }
 
-    Ok(())
-}
-
-fn apply_tag_modification(movie: &mut Movie, modification: &TagModification) -> Result<(), String> {
-    for tag in &mut movie.tags {
-        match (tag, modification.tag.as_str()) {
-            (Tag::DefineBinaryData(tag), "DefineBinaryDataTag") if tag.id == modification.id => {
-                if let Some(data) = modification.properties.get("data") {
-                    tag.data = serde_json::from_value(data.clone())
-                        .map_err(|e| format!("Failed to parse binary data: {}", e))?;
-                }
-            }
-            (Tag::DefineBitmap(tag), "DefineBitmapTag") if tag.id == modification.id => {
-                if let Some(data) = modification.properties.get("data") {
-                    tag.data = serde_json::from_value(data.clone())
-                        .map_err(|e| format!("Failed to parse bitmap data: {}", e))?;
-                }
-            }
-            (Tag::DefineButton(tag), "DefineButtonTag") if tag.id == modification.id => {
-                if let Some(records) = modification.properties.get("records") {
-                    tag.records = serde_json::from_value(records.clone())
-                        .map_err(|e| format!("Failed to parse button records: {}", e))?;
-                }
-            }
-            (Tag::DefineButtonColorTransform(tag), "DefineButtonColorTransformTag")
-                if tag.button_id == modification.id =>
-            {
-                if let Some(transform) = modification.properties.get("transform") {
-                    tag.transform = serde_json::from_value(transform.clone())
-                        .map_err(|e| format!("Failed to parse color transform: {}", e))?;
-                }
-            }
-            (Tag::DefineDynamicText(tag), "DefineDynamicTextTag") if tag.id == modification.id => {
-                if let Some(text) = modification.properties.get("text") {
-                    tag.text = serde_json::from_value(text.clone())
-                        .map_err(|e| format!("Failed to parse dynamic text: {}", e))?;
-                }
-            }
-            (Tag::DefineMorphShape(tag), "DefineMorphShapeTag") if tag.id == modification.id => {
-                if let Some(shape) = modification.properties.get("shape") {
-                    tag.shape = serde_json::from_value(shape.clone())
-                        .map_err(|e| format!("Failed to parse morph shape: {}", e))?;
-                }
-            }
-            (Tag::DefineShape(tag), "DefineShapeTag") if tag.id == modification.id => {
-                if let Some(shape) = modification.properties.get("shape") {
-                    tag.shape = serde_json::from_value(shape.clone())
-                        .map_err(|e| format!("Failed to parse shape: {}", e))?;
-                } else {
-                    if let Some(bounds) = modification.properties.get("bounds") {
-                        tag.bounds = serde_json::from_value(bounds.clone())
-                            .map_err(|e| format!("Failed to parse shape bounds: {}", e))?;
-                    }
-                    if let Some(records) = modification.properties.get("records") {
-                        tag.shape.records = serde_json::from_value(records.clone())
-                            .map_err(|e| format!("Failed to parse shape records: {}", e))?;
-                    }
-                    if let Some(styles) = modification.properties.get("styles") {
-                        tag.shape.initial_styles = serde_json::from_value(styles.clone())
-                            .map_err(|e| format!("Failed to parse shape styles: {}", e))?;
-                    } else {
-                        if let Some(fill_styles) = modification.properties.get("fillStyles") {
-                            tag.shape.initial_styles.fill =
-                                serde_json::from_value(fill_styles.clone())
-                                    .map_err(|e| format!("Failed to parse fill styles: {}", e))?;
-                        }
-                        if let Some(line_styles) = modification.properties.get("lineStyles") {
-                            tag.shape.initial_styles.line =
-                                serde_json::from_value(line_styles.clone())
-                                    .map_err(|e| format!("Failed to parse line styles: {}", e))?;
-                        }
-                    }
-                }
-            }
-            (Tag::DefineSprite(tag), "DefineSpriteTag") if tag.id == modification.id => {
-                if let Some(tags) = modification.properties.get("tags") {
-                    tag.tags = serde_json::from_value(tags.clone())
-                        .map_err(|e| format!("Failed to parse sprite tags: {}", e))?;
-                }
-            }
-            (Tag::DefineText(tag), "DefineTextTag") if tag.id == modification.id => {
-                if let Some(records) = modification.properties.get("records") {
-                    tag.records = serde_json::from_value(records.clone())
-                        .map_err(|e| format!("Failed to parse text records: {}", e))?;
-                }
-            }
-
-            (Tag::DoAbc(tag), "DoAbcTag") if modification.tag == "DoAbcTag" => {
-                if let Some(data) = modification.properties.get("data") {
-                    tag.data = serde_json::from_value(data.clone())
-                        .map_err(|e| format!("Failed to parse ABC data: {}", e))?;
-                }
-            }
-            (Tag::DoAction(tag), "DoActionTag") if modification.tag == "DoActionTag" => {
-                if let Some(actions) = modification.properties.get("actions") {
-                    tag.actions = serde_json::from_value(actions.clone())
-                        .map_err(|e| format!("Failed to parse actions: {}", e))?;
-                }
-            }
-            (Tag::FileAttributes(tag), "FileAttributesTag") if modification.tag == "FileAttributesTag" => {
-                if let Some(props) = modification.properties.as_object() {
-                    if let Some(as3) = props.get("actionScript3") {
-                        tag.use_as3 = as3.as_bool().unwrap_or(false);
-                    }
-                    if let Some(metadata) = props.get("hasMetadata") {
-                        tag.has_metadata = metadata.as_bool().unwrap_or(false);
-                    }
-                    if let Some(network) = props.get("useNetwork") {
-                        tag.use_network = network.as_bool().unwrap_or(false);
-                    }
-                    if let Some(gpu) = props.get("useGPU") {
-                        tag.use_direct_blit = gpu.as_bool().unwrap_or(false);
-                    }
-                }
-            }
-            (Tag::FrameLabel(tag), "FrameLabelTag") => {
-                if let Some(name) = modification.properties.get("name") {
-                    tag.name = serde_json::from_value(name.clone())
-                        .map_err(|e| format!("Failed to parse frame label: {}", e))?;
-                }
-            }
-            (Tag::PlaceObject(tag), "PlaceObjectTag") => {
-                if let Some(matrix) = modification.properties.get("matrix") {
-                    tag.matrix = serde_json::from_value(matrix.clone())
-                        .map_err(|e| format!("Failed to parse matrix: {}", e))?;
-                }
-                if let Some(color_transform) = modification.properties.get("colorTransform") {
-                    tag.color_transform = serde_json::from_value(color_transform.clone())
-                        .map_err(|e| format!("Failed to parse color transform: {}", e))?;
-                }
-            }
-            (Tag::RemoveObject(tag), "RemoveObjectTag") => {
-                if let Some(depth) = modification.properties.get("depth") {
-                    tag.depth = serde_json::from_value(depth.clone())
-                        .map_err(|e| format!("Failed to parse depth: {}", e))?;
-                }
-            }
-            (Tag::SetBackgroundColor(tag), "SetBackgroundColorTag") => {
-                if let Some(color) = modification.properties.get("backgroundColor") {
-                    let rgba: StraightSRgba8 = serde_json::from_value(color.clone())
-                        .map_err(|e| format!("Failed to parse color: {}", e))?;
-                    tag.color = SRgb8 {
-                        r: rgba.r,
-                        g: rgba.g,
-                        b: rgba.b,
-                    };
-                }
-            }
-            (Tag::SymbolClass(tag), "SymbolClassTag") => {
-                if let Some(symbols) = modification.properties.get("symbols") {
-                    tag.symbols = serde_json::from_value(symbols.clone())
-                        .map_err(|e| format!("Failed to parse symbols: {}", e))?;
-                }
-            }
-
-            (Tag::DefineSceneAndFrameLabelData(tag), "DefineSceneAndFrameLabelDataTag") => {
-                if let Some(scenes) = modification.properties.get("scenes") {
-                    tag.scenes = serde_json::from_value(scenes.clone())
-                        .map_err(|e| format!("Failed to parse scenes: {}", e))?;
-                }
-                if let Some(labels) = modification.properties.get("labels") {
-                    tag.labels = serde_json::from_value(labels.clone())
-                        .map_err(|e| format!("Failed to parse labels: {}", e))?;
-                }
-            }
-            _ => continue,
-        }
-    }
     Ok(())
 }
 
@@ -2122,7 +1952,7 @@ fn compile_with_jpexs(handle: AppHandle, as_path: &Path, swf_path: &Path) -> Res
     let output_swf = output_dir.path().join("output.swf");
 
     // Run JPEXS to import the ActionScript
-    let status = Command::new("java")
+    let output = Command::new("java")
         .args([
             "-jar",
             resource_path.to_str().unwrap(),
@@ -2131,11 +1961,18 @@ fn compile_with_jpexs(handle: AppHandle, as_path: &Path, swf_path: &Path) -> Res
             swf_path.to_str().unwrap(),
             output_swf.to_str().unwrap(),
         ])
-        .status()
+        .output()
         .map_err(|e| format!("Failed to execute JPEXS: {}", e))?;
 
-    if !status.success() {
-        return Err("JPEXS script import failed".to_string());
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        return Err(format!(
+            "JPEXS script import failed (exit {:?}). stderr: {} stdout: {}",
+            output.status.code(),
+            stderr.trim(),
+            stdout.trim()
+        ));
     }
 
     // Now we need to extract the ABC tag from the output SWF
