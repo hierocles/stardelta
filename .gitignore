@@ -25,7 +25,6 @@ dist-ssr
 src-tauri/resources/jpexs
 src-tauri/target
 src-tauri/gen/schemas
-src-tauri/resources/jpexs/
 vendor/**/target
 
 .planning
