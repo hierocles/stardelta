@@ -63,6 +63,10 @@ On the first `cargo build`, `src-tauri/build.rs` downloads a **pinned** official
 
 **Manual download** (optional): run `scripts/download-jpexs-ffdec.sh` or `scripts/download-jpexs-ffdec.ps1` from the repo root.
 
+**Optional integration check** (ignored by default): from `src-tauri/`, run  
+`STARDELTA_RUN_JPEXS_INTEGRATION=1 FFDEC_JAR=/path/to/ffdec.jar cargo test --test jpexs_ffdec_smoke -- --ignored`  
+to confirm Java and your `ffdec.jar` path.
+
 **CI caching**: cache either the zip file or the `src-tauri/resources/jpexs/` tree between runs to avoid repeated downloads.
 
 **Upgrading JPEXS**: edit the pinned tag, file name, download URL, and `EXPECTED_ZIP_SHA256_HEX` in `src-tauri/build.rs`, and update the same URL and hash in the download scripts. Use the `digest` field from the [GitHub release API](https://docs.github.com/en/rest/releases/assets) for the zip asset.
@@ -73,12 +77,13 @@ On the first `cargo build`, `src-tauri/build.rs` downloads a **pinned** official
 
 The JSON patch format is a simple way to describe changes to SWF files. It is a list of operations to perform on the SWF file.
 
-The patch file must include the `swf` section, while `transparent` and `file` operations are optional:
+The patch file must include the `swf` section, while `transparent`, `file`, and `actionscript` are optional:
 
 ```json
 {
   "transparent": [],
   "file": [],
+  "actionscript": [],
   "swf": {
     "modifications": []
   }
@@ -117,6 +122,37 @@ Note: Only SVG files are supported for the source. SVG files should be placed in
   }
 }
 ```
+
+### ActionScript (AS3)
+
+Optional `actionscript` is an array of patches applied **before** the `swf.modifications` merge step. Adding or replacing scripts compiles `.as` source with **JPEXS FFDec** (`-importScript`); **Java** and `ffdec.jar` must be available (see [Development](#development)). Removing ABC tags does **not** invoke JPEXS.
+
+Each patch object supports:
+
+| Field | Used when | Description |
+| ----- | --------- | ----------- |
+| `insert_mode` | always | `"add"`, `"replace"`, or `"remove"`. |
+| `source_file` | `add`, `replace` | Path to `.as` relative to the patch JSON file (required for compile modes; must be omitted for `remove`). |
+| `class_name` | optional | Simple class name; used to rewrite the compiled source in `replace`, to match bytecode when disambiguating JPEXS output, for substring-based `replace`/`remove` targeting, and for `cleanup_symbol_class`. |
+| `package_name` | optional | Package for source rewrite and fully qualified name (`package.class`) when matching bytecode or cleaning symbols. |
+| `symbol_bindings` | optional | Updates the `SymbolClass` tag (not allowed with `remove`). |
+| `doabc_ordinal` | `replace`, `remove` | 0-based index counting only `DoAbc` tags in the SWF (mutually exclusive with `tag_index`). |
+| `tag_index` | `replace`, `remove` | 0-based index into the root `tags` array; must reference a `DoAbc` tag (mutually exclusive with `doabc_ordinal`). |
+| `cleanup_symbol_class` | `remove` only | If `true`, remove `SymbolClass` entries whose `name` exactly matches the fully qualified name (`package_name` + `class_name`) and/or the bare `class_name`. Requires a non-empty `class_name`. |
+
+**Targeting rules**
+
+- **`add`**: appends a new `DoAbc` tag. Do not set `doabc_ordinal` or `tag_index`.
+- **`replace`**: supply `doabc_ordinal` **or** `tag_index` to replace that block; otherwise the first `DoAbc` whose bytecode contains `class_name` is replaced, or the first `DoAbc` if `class_name` is omitted.
+- **`remove`**: supply **exactly one** of `doabc_ordinal`, `tag_index`, or `class_name` (substring match on ABC bytes). Omit `source_file` and `symbol_bindings`.
+
+Bytecode matching uses a simple substring search in ABC data, which can miss or false-match; prefer ordinals or `tag_index` from an exported Movie JSON when possible.
+
+After JPEXS compiles, StarDelta picks which output `DoAbc` block to use by: matching `class_name`, then fully qualified `package_name.class_name`, then a single “novel” block not present in the input SWF; otherwise the first block (with a stderr warning if multiple blocks exist).
+
+Examples: [`example_patch/patches/mainmenu_patch.json`](example_patch/patches/mainmenu_patch.json) (add/replace), [`example_patch/patches/actionscript_remove_example.json`](example_patch/patches/actionscript_remove_example.json) (remove by ordinal).
+
+If you list several `remove` patches, each step runs on the movie left by the previous one (ordinals and `tag_index` shift). Prefer a single remove, remove in **descending** `doabc_ordinal`, or re-export JSON between edits.
 
 ### SWF
 

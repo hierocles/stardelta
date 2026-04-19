@@ -1,0 +1,11 @@
+{
+  "swf": {
+    "modifications": []
+  },
+  "actionscript": [
+    {
+      "insert_mode": "remove",
+      "doabc_ordinal": 0
+    }
+  ]
+}

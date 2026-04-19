@@ -168,11 +168,25 @@ pub struct NewScene {
 
 #[derive(Debug, Deserialize)]
 pub struct ActionScriptPatch {
-    pub source_file: String,           // Path to the ActionScript source file
+    /// Path to the ActionScript source file (required for `add` / `replace`; omit for `remove`).
+    #[serde(default)]
+    pub source_file: Option<String>,
     pub insert_mode: ActionScriptInsertMode,  // How to insert the script
-    pub class_name: Option<String>,    // Optional class name for replacement
+    #[serde(default)]
+    pub class_name: Option<String>,    // Optional class name for replacement / remove-by-name
+    #[serde(default)]
     pub package_name: Option<String>,  // Optional package name
+    #[serde(default)]
     pub symbol_bindings: Option<Vec<SymbolBinding>>,  // Optional symbol class bindings
+    /// 0-based index among `DoAbc` tags only (disambiguates which ABC block to replace or remove).
+    #[serde(default)]
+    pub doabc_ordinal: Option<usize>,
+    /// 0-based index into the root `movie.tags` array; must reference a `DoAbc` tag.
+    #[serde(default)]
+    pub tag_index: Option<usize>,
+    /// When true after `remove`, drop `SymbolClass` entries whose `name` matches [cleanup_symbol_class_names](ActionScriptPatch::cleanup_symbol_class_names).
+    #[serde(default)]
+    pub cleanup_symbol_class: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -181,12 +195,222 @@ pub struct SymbolBinding {
     pub class_name: String,            // The fully qualified class name to bind to
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
-#[derive(PartialEq)]
 pub enum ActionScriptInsertMode {
-    Add,     // Add the script as a new DoABC tag
-    Replace  // Replace an existing script with matching class name
+    /// Append a new `DoAbc` tag.
+    Add,
+    /// Replace an existing `DoAbc` (by ordinal, root `tag_index`, or `class_name` substring scan).
+    Replace,
+    /// Remove a `DoAbc` tag (by ordinal, root `tag_index`, or `class_name` substring scan). Does not run JPEXS.
+    Remove,
+}
+
+impl ActionScriptPatch {
+    /// Fully qualified class name for bytecode / symbol cleanup (`package.class`), when both parts are set.
+    pub fn fully_qualified_class_name(&self) -> Option<String> {
+        match (&self.package_name, &self.class_name) {
+            (Some(pkg), Some(cls)) if !pkg.is_empty() && !cls.is_empty() => {
+                Some(format!("{}.{}", pkg, cls))
+            }
+            _ => None,
+        }
+    }
+
+    /// Strings to strip from `SymbolClass` when `cleanup_symbol_class` is true (FQCN if possible, else `class_name`).
+    pub fn cleanup_symbol_class_names(&self) -> Result<Vec<String>, String> {
+        let mut names = vec![];
+        if let Some(fq) = self.fully_qualified_class_name() {
+            names.push(fq);
+        }
+        if let Some(cls) = &self.class_name {
+            if !cls.is_empty() && !names.contains(cls) {
+                names.push(cls.clone());
+            }
+        }
+        if names.is_empty() {
+            return Err(
+                "cleanup_symbol_class requires a non-empty class_name (and optionally package_name for FQCN)"
+                    .to_string(),
+            );
+        }
+        Ok(names)
+    }
+}
+
+fn validate_actionscript_patch(patch: &ActionScriptPatch) -> Result<(), String> {
+    if patch.doabc_ordinal.is_some() && patch.tag_index.is_some() {
+        return Err(
+            "actionscript patch: specify at most one of doabc_ordinal and tag_index".to_string(),
+        );
+    }
+
+    if patch.cleanup_symbol_class == Some(true) {
+        patch.cleanup_symbol_class_names()?;
+    }
+
+    match patch.insert_mode {
+        ActionScriptInsertMode::Add | ActionScriptInsertMode::Replace => {
+            let sf = patch
+                .source_file
+                .as_ref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty());
+            if sf.is_none() {
+                return Err(
+                    "actionscript patch: source_file is required for insert_mode add or replace"
+                        .to_string(),
+                );
+            }
+            if patch.insert_mode == ActionScriptInsertMode::Add {
+                if patch.doabc_ordinal.is_some() || patch.tag_index.is_some() {
+                    return Err(
+                        "actionscript patch: doabc_ordinal and tag_index are not used with insert_mode add"
+                            .to_string(),
+                    );
+                }
+            }
+        }
+        ActionScriptInsertMode::Remove => {
+            if patch
+                .source_file
+                .as_ref()
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false)
+            {
+                return Err(
+                    "actionscript patch: remove patches must not set source_file".to_string(),
+                );
+            }
+            if patch.symbol_bindings.is_some() {
+                return Err(
+                    "actionscript patch: symbol_bindings are not supported with insert_mode remove"
+                        .to_string(),
+                );
+            }
+            let n_selectors = patch.doabc_ordinal.is_some() as u8
+                + patch.tag_index.is_some() as u8
+                + patch
+                    .class_name
+                    .as_ref()
+                    .map(|c| !c.is_empty())
+                    .unwrap_or(false) as u8;
+            if n_selectors != 1 {
+                return Err(
+                    "actionscript patch: remove requires exactly one of doabc_ordinal, tag_index, or class_name"
+                        .to_string(),
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn collect_doabc_payloads(movie: &Movie) -> Vec<Vec<u8>> {
+    movie
+        .tags
+        .iter()
+        .filter_map(|t| {
+            if let Tag::DoAbc(d) = t {
+                Some(d.data.clone())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Root `movie.tags` index for the n-th `DoAbc` tag, or error if out of range.
+fn root_index_for_doabc_ordinal(movie: &Movie, ordinal: usize) -> Result<usize, String> {
+    let mut seen = 0usize;
+    for (i, tag) in movie.tags.iter().enumerate() {
+        if matches!(tag, Tag::DoAbc(_)) {
+            if seen == ordinal {
+                return Ok(i);
+            }
+            seen += 1;
+        }
+    }
+    Err(format!(
+        "actionscript patch: doabc_ordinal {} is out of range ({} DoAbc tags)",
+        ordinal,
+        seen
+    ))
+}
+
+fn ensure_tag_is_doabc(movie: &Movie, tag_index: usize) -> Result<(), String> {
+    let tag = movie
+        .tags
+        .get(tag_index)
+        .ok_or_else(|| format!("actionscript patch: tag_index {} is out of range", tag_index))?;
+    if !matches!(tag, Tag::DoAbc(_)) {
+        return Err(format!(
+            "actionscript patch: tag_index {} is not a DoAbc tag",
+            tag_index
+        ));
+    }
+    Ok(())
+}
+
+fn root_index_for_class_name_scan(movie: &Movie, class_name: &str) -> Result<usize, String> {
+    for (i, tag) in movie.tags.iter().enumerate() {
+        if let Tag::DoAbc(abc_tag) = tag {
+            if contains_class_name(&abc_tag.data, class_name) {
+                return Ok(i);
+            }
+        }
+    }
+    Err(format!(
+        "actionscript patch: no DoAbc tag contains class name {:?}",
+        class_name
+    ))
+}
+
+fn resolve_replace_doabc_root_index(movie: &Movie, patch: &ActionScriptPatch) -> Result<Option<usize>, String> {
+    if let Some(ord) = patch.doabc_ordinal {
+        return root_index_for_doabc_ordinal(movie, ord).map(Some);
+    }
+    if let Some(idx) = patch.tag_index {
+        ensure_tag_is_doabc(movie, idx)?;
+        return Ok(Some(idx));
+    }
+    Ok(None)
+}
+
+fn resolve_remove_doabc_root_index(movie: &Movie, patch: &ActionScriptPatch) -> Result<usize, String> {
+    if let Some(ord) = patch.doabc_ordinal {
+        root_index_for_doabc_ordinal(movie, ord)
+    } else if let Some(idx) = patch.tag_index {
+        ensure_tag_is_doabc(movie, idx)?;
+        Ok(idx)
+    } else if let Some(cls) = &patch.class_name {
+        if cls.is_empty() {
+            return Err("actionscript patch: class_name must not be empty".to_string());
+        }
+        root_index_for_class_name_scan(movie, cls)
+    } else {
+        Err("actionscript patch: internal error (remove without selector)".to_string())
+    }
+}
+
+fn apply_symbol_class_cleanup(movie: &mut Movie, names_to_remove: &[String]) {
+    for tag in &mut movie.tags {
+        if let Tag::SymbolClass(st) = tag {
+            st.symbols.retain(|n| !names_to_remove.iter().any(|rm| n.name == *rm));
+            break;
+        }
+    }
+}
+
+fn apply_actionscript_remove(movie: &mut Movie, patch: &ActionScriptPatch) -> Result<(), String> {
+    let idx = resolve_remove_doabc_root_index(movie, patch)?;
+    movie.tags.remove(idx);
+    if patch.cleanup_symbol_class == Some(true) {
+        let names = patch.cleanup_symbol_class_names()?;
+        apply_symbol_class_cleanup(movie, &names);
+    }
+    Ok(())
 }
 
 fn read_swf_file(path: &str) -> Result<Vec<u8>, String> {
@@ -1724,7 +1948,7 @@ pub fn read_file_to_string(_handle: AppHandle, path: String) -> Result<String, S
 }
 
 fn apply_actionscript_patches(movie: &mut Movie, patches: &[ActionScriptPatch], config_path: &str, handle: AppHandle) -> Result<(), String> {
-    // Create a temporary directory for compilation
+    // Create a temporary directory for compilation (add/replace only)
     let temp_dir = TempDir::new()
         .map_err(|e| format!("Failed to create temporary directory: {}", e))?;
 
@@ -1734,10 +1958,17 @@ fn apply_actionscript_patches(movie: &mut Movie, patches: &[ActionScriptPatch], 
         .ok_or_else(|| "Could not determine config file directory".to_string())?;
 
     for patch in patches {
-        // Read the ActionScript source file
-        let source_path = config_dir.join(&patch.source_file);
+        validate_actionscript_patch(patch)?;
+
+        if patch.insert_mode == ActionScriptInsertMode::Remove {
+            apply_actionscript_remove(movie, patch)?;
+            continue;
+        }
+
+        let source_rel = patch.source_file.as_ref().map(|s| s.trim()).unwrap_or("");
+        let source_path = config_dir.join(source_rel);
         let mut source_code = fs::read_to_string(&source_path)
-            .map_err(|e| format!("Failed to read ActionScript file '{}': {}", patch.source_file, e))?;
+            .map_err(|e| format!("Failed to read ActionScript file '{}': {}", source_rel, e))?;
 
         // If package_name is provided, ensure the code has the correct package declaration
         if let Some(package_name) = &patch.package_name {
@@ -1770,6 +2001,8 @@ fn apply_actionscript_patches(movie: &mut Movie, patches: &[ActionScriptPatch], 
             }
         }
 
+        let input_doabc_payloads = collect_doabc_payloads(movie);
+
         // Create a temporary SWF for compilation
         let temp_swf_path = temp_dir.path().join("temp.swf");
 
@@ -1785,7 +2018,13 @@ fn apply_actionscript_patches(movie: &mut Movie, patches: &[ActionScriptPatch], 
             .map_err(|e| format!("Failed to write temporary AS file: {}", e))?;
 
         // Compile the ActionScript using JPEXS
-        let abc_data = compile_with_jpexs(handle.clone(), &temp_swf_path, temp_dir.path())?;
+        let abc_data = compile_with_jpexs(
+            handle.clone(),
+            &temp_swf_path,
+            temp_dir.path(),
+            patch,
+            &input_doabc_payloads,
+        )?;
 
         // Create a new DoABC tag with the compiled code
         let new_tag = Tag::DoAbc(swf_types::tags::DoAbc {
@@ -1797,10 +2036,11 @@ fn apply_actionscript_patches(movie: &mut Movie, patches: &[ActionScriptPatch], 
         match patch.insert_mode {
             ActionScriptInsertMode::Add => {
                 movie.tags.push(new_tag);
-            },
+            }
             ActionScriptInsertMode::Replace => {
-                if let Some(class_name) = &patch.class_name {
-                    // Try to find and replace the existing ABC tag with matching class name
+                if let Some(root_idx) = resolve_replace_doabc_root_index(movie, patch)? {
+                    movie.tags[root_idx] = new_tag;
+                } else if let Some(class_name) = &patch.class_name {
                     let mut found = false;
                     for tag in &mut movie.tags {
                         if let Tag::DoAbc(abc_tag) = tag {
@@ -1815,7 +2055,6 @@ fn apply_actionscript_patches(movie: &mut Movie, patches: &[ActionScriptPatch], 
                         movie.tags.push(new_tag);
                     }
                 } else {
-                    // If no class name specified, replace first DoAbc tag
                     let mut found = false;
                     for tag in &mut movie.tags {
                         if let Tag::DoAbc(_) = tag {
@@ -1828,7 +2067,8 @@ fn apply_actionscript_patches(movie: &mut Movie, patches: &[ActionScriptPatch], 
                         movie.tags.push(new_tag);
                     }
                 }
-            },
+            }
+            ActionScriptInsertMode::Remove => unreachable!("remove handled above"),
         }
 
         // Handle symbol class bindings if present
@@ -1984,7 +2224,13 @@ fn resolve_ffdec_jar(handle: &AppHandle) -> Result<PathBuf, String> {
 }
 
 /// Run JPEXS `-importScript <infile.swf> <outfile.swf> <scriptsfolder>` (see upstream CLI docs).
-fn compile_with_jpexs(handle: AppHandle, in_swf: &Path, scripts_dir: &Path) -> Result<Vec<u8>, String> {
+fn compile_with_jpexs(
+    handle: AppHandle,
+    in_swf: &Path,
+    scripts_dir: &Path,
+    patch: &ActionScriptPatch,
+    input_doabc_payloads: &[Vec<u8>],
+) -> Result<Vec<u8>, String> {
     check_java_installation()?;
 
     let resource_path = resolve_ffdec_jar(&handle)?;
@@ -2048,12 +2294,235 @@ fn compile_with_jpexs(handle: AppHandle, in_swf: &Path, scripts_dir: &Path) -> R
     let movie: Movie = serde_json::from_str(&json_data)
         .map_err(|e| format!("Failed to parse temporary JSON: {}", e))?;
 
-    // Find the first DoAbc tag and return its data
-    for tag in movie.tags {
-        if let Tag::DoAbc(abc_tag) = tag {
-            return Ok(abc_tag.data);
+    let output_blocks: Vec<Vec<u8>> = movie
+        .tags
+        .iter()
+        .filter_map(|t| {
+            if let Tag::DoAbc(d) = t {
+                Some(d.data.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    select_compiled_doabc_data(&output_blocks, patch, input_doabc_payloads)
+}
+
+/// Pick which `DoAbc` payload from JPEXS output to use (unit-tested without Java).
+fn select_compiled_doabc_data(
+    output_blocks: &[Vec<u8>],
+    patch: &ActionScriptPatch,
+    input_doabc_payloads: &[Vec<u8>],
+) -> Result<Vec<u8>, String> {
+    if output_blocks.is_empty() {
+        return Err("No ABC tag found in compiled SWF".to_string());
+    }
+
+    if let Some(class_name) = &patch.class_name {
+        if !class_name.is_empty() {
+            for block in output_blocks {
+                if contains_class_name(block, class_name) {
+                    return Ok(block.clone());
+                }
+            }
         }
     }
 
-    Err("No ABC tag found in compiled SWF".to_string())
+    if let Some(fq) = patch.fully_qualified_class_name() {
+        for block in output_blocks {
+            if contains_class_name(block, &fq) {
+                return Ok(block.clone());
+            }
+        }
+    }
+
+    let novel: Vec<&Vec<u8>> = output_blocks
+        .iter()
+        .filter(|b| {
+            !input_doabc_payloads
+                .iter()
+                .any(|prev| prev.as_slice() == b.as_slice())
+        })
+        .collect();
+    if novel.len() == 1 {
+        return Ok(novel[0].clone());
+    }
+
+    if output_blocks.len() > 1 {
+        eprintln!(
+            "Warning: JPEXS produced {} DoAbc tags; using the first block (could not disambiguate).",
+            output_blocks.len()
+        );
+    }
+
+    Ok(output_blocks[0].clone())
+}
+
+#[cfg(test)]
+mod actionscript_patch_tests {
+    use super::*;
+    use serde_json::json;
+    use swf_types::Header;
+    use swf_types::NamedId;
+    use swf_types::fixed::Ufixed8P8;
+
+    fn sample_movie_with_doabcs(payloads: &[&[u8]]) -> Movie {
+        let mut tags: Vec<Tag> = vec![Tag::ShowFrame];
+        for p in payloads {
+            tags.push(Tag::DoAbc(swf_types::tags::DoAbc {
+                header: None,
+                data: (*p).to_vec(),
+            }));
+        }
+        tags.push(Tag::ShowFrame);
+        Movie {
+            header: Header {
+                swf_version: 40,
+                frame_size: Rect {
+                    x_min: 0,
+                    x_max: 1000,
+                    y_min: 0,
+                    y_max: 1000,
+                },
+                frame_rate: Ufixed8P8::from_value(24.0),
+                frame_count: 1,
+            },
+            tags,
+        }
+    }
+
+    fn patch_from_value(v: serde_json::Value) -> ActionScriptPatch {
+        serde_json::from_value(v).expect("patch json")
+    }
+
+    #[test]
+    fn validate_rejects_add_without_source() {
+        let p = patch_from_value(json!({
+            "insert_mode": "add",
+        }));
+        assert!(validate_actionscript_patch(&p).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_remove_with_both_ordinals() {
+        let p = patch_from_value(json!({
+            "insert_mode": "remove",
+            "doabc_ordinal": 0,
+            "tag_index": 1,
+        }));
+        assert!(validate_actionscript_patch(&p).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_remove_without_exactly_one_selector() {
+        let p = patch_from_value(json!({
+            "insert_mode": "remove",
+        }));
+        assert!(validate_actionscript_patch(&p).is_err());
+    }
+
+    #[test]
+    fn remove_by_doabc_ordinal() {
+        let mut movie = sample_movie_with_doabcs(&[b"abc0", b"abc1", b"abc2"]);
+        let p = patch_from_value(json!({
+            "insert_mode": "remove",
+            "doabc_ordinal": 1,
+        }));
+        validate_actionscript_patch(&p).unwrap();
+        apply_actionscript_remove(&mut movie, &p).unwrap();
+        let payloads = collect_doabc_payloads(&movie);
+        assert_eq!(payloads.len(), 2);
+        assert_eq!(payloads[0], b"abc0");
+        assert_eq!(payloads[1], b"abc2");
+    }
+
+    #[test]
+    fn remove_by_tag_index() {
+        let mut movie = sample_movie_with_doabcs(&[b"a", b"b"]);
+        // tags: ShowFrame, DoAbc, DoAbc, ShowFrame -> indices 1 and 2 are DoAbc
+        let p = patch_from_value(json!({
+            "insert_mode": "remove",
+            "tag_index": 2,
+        }));
+        apply_actionscript_remove(&mut movie, &p).unwrap();
+        let payloads = collect_doabc_payloads(&movie);
+        assert_eq!(payloads, vec![b"a".to_vec()]);
+    }
+
+    #[test]
+    fn remove_by_class_name_substring() {
+        let mut movie = sample_movie_with_doabcs(&[b"xxFooBarxx", b"other"]);
+        let p = patch_from_value(json!({
+            "insert_mode": "remove",
+            "class_name": "FooBar",
+        }));
+        apply_actionscript_remove(&mut movie, &p).unwrap();
+        assert_eq!(collect_doabc_payloads(&movie), vec![b"other".to_vec()]);
+    }
+
+    #[test]
+    fn replace_resolve_ordinal_targets_correct_root_index() {
+        let movie = sample_movie_with_doabcs(&[b"a", b"b", b"c"]);
+        let p = patch_from_value(json!({
+            "insert_mode": "replace",
+            "source_file": "dummy.as",
+            "doabc_ordinal": 2,
+        }));
+        let idx = resolve_replace_doabc_root_index(&movie, &p)
+            .unwrap()
+            .unwrap();
+        assert_eq!(idx, 3);
+    }
+
+    #[test]
+    fn symbol_class_cleanup_removes_matching_names() {
+        let mut movie = sample_movie_with_doabcs(&[b"x"]);
+        movie.tags.push(Tag::SymbolClass(swf_types::tags::SymbolClass {
+            symbols: vec![
+                NamedId {
+                    id: 1,
+                    name: "com.foo.Old".to_string(),
+                },
+                NamedId {
+                    id: 2,
+                    name: "other.Linkage".to_string(),
+                },
+            ],
+        }));
+        apply_symbol_class_cleanup(&mut movie, &["com.foo.Old".to_string()]);
+        let sym = movie.tags.iter().find_map(|t| {
+            if let Tag::SymbolClass(s) = t {
+                Some(s)
+            } else {
+                None
+            }
+        });
+        assert_eq!(sym.unwrap().symbols.len(), 1);
+        assert_eq!(sym.unwrap().symbols[0].name, "other.Linkage");
+    }
+
+    #[test]
+    fn select_doabc_prefers_class_name_match() {
+        let p = patch_from_value(json!({
+            "insert_mode": "replace",
+            "source_file": "m.as",
+            "class_name": "Zed",
+        }));
+        let out = vec![b"no".to_vec(), b"**Zed**".to_vec()];
+        let picked = select_compiled_doabc_data(&out, &p, &[]).unwrap();
+        assert_eq!(picked, b"**Zed**");
+    }
+
+    #[test]
+    fn select_doabc_prefers_single_novel_block() {
+        let p = patch_from_value(json!({
+            "insert_mode": "add",
+            "source_file": "m.as",
+        }));
+        let input = vec![b"old".to_vec()];
+        let out = vec![b"old".to_vec(), b"fresh".to_vec()];
+        let picked = select_compiled_doabc_data(&out, &p, &input).unwrap();
+        assert_eq!(picked, b"fresh");
+    }
 }
