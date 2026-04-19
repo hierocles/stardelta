@@ -1,0 +1,17 @@
+Third-party software
+
+This project may bundle or invoke JPEXS Free Flash Decompiler (FFDec) from the
+official release archive published by the JPEXS project. Those materials are
+not authored by the StarDelta maintainers.
+
+  Project: JPEXS Free Flash Decompiler
+  Copyright: Jindra Petřík and contributors
+  Homepage: https://github.com/jindrapetrik/jpexs-decompiler
+  License: GNU General Public License v3.0 only (GPL-3.0-only)
+  Full license text (as shipped upstream): see `license.txt` inside the
+  extracted portable distribution under `src-tauri/resources/jpexs/` after
+  build, or https://github.com/jindrapetrik/jpexs-decompiler/blob/master/license.txt
+
+StarDelta itself is licensed under the MIT License (see LICENSE). Combining or
+distributing GPL-3.0 software may impose additional obligations; consult your
+legal counsel when preparing public releases.

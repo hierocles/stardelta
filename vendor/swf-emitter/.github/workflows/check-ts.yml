@@ -1,0 +1,40 @@
+name: "check-ts"
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  check-ts:
+    runs-on: "ubuntu-latest"
+
+    strategy:
+      matrix:
+        # Support policy: Current and all LTS.
+        node-version: ["14", "16", "18"]
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: "recursive"
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v2
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "yarn"
+          cache-dependency-path: "ts/yarn.lock"
+
+      - name: Build and test
+        run: |
+          cd ts
+          yarn install
+          yarn test
+
+      - name: Upload coverage report to codecov.io
+        uses: codecov/codecov-action@v2
+        with:
+          files: "./coverage/lcov.info"
+          working-directory: "./ts"

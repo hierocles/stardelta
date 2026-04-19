@@ -1,4 +1,4 @@
-# ![StarDelta Logo](assets/StarDelta%20Logo.svg)
+# StarDelta Logo
 
 StarDelta is a tool for creating and applying patches to Starfield UIs. It includes special support for modifying SWF files.
 
@@ -39,23 +39,51 @@ You can patch SWF files either individually or in batch.
 
 ### Video Instructions (YouTube)
 
-[![Watch the video](https://i.ytimg.com/an_webp/HrRikA1y2go/mqdefault_6s.webp?du=3000&sqp=COa5pL0G&rs=AOn4CLD52Ea1JMJYklsO-YRUUksc-sEZ9A)](https://youtu.be/HrRikA1y2go?si=zcIAlfGyJ9Z9JZt3)
+[Watch the video](https://youtu.be/HrRikA1y2go?si=zcIAlfGyJ9Z9JZt3)
 
 #### Installing Patched Files
 
 1. Move the patched files to the Starfield Data directory, overwriting if necessary
 2. Alternatively, use your preferred package manager to install the "Interface" folder as a mod
 
+## Development
+
+Building StarDelta requires [Bun](https://bun.sh/), [Rust](https://www.rust-lang.org/), and a **Java runtime** on your `PATH` if you use ActionScript-related SWF features (JPEXS runs as `java -jar ffdec.jar`).
+
+### JPEXS / FFDec (ActionScript compilation)
+
+On the first `cargo build`, `src-tauri/build.rs` downloads a **pinned** official portable archive (`ffdec_<version>.zip` from [jpexs-decompiler releases](https://github.com/jindrapetrik/jpexs-decompiler/releases)), verifies its **SHA-256**, and extracts it to `src-tauri/resources/jpexs/` (gitignored). That directory includes `ffdec.jar`, `lib/`, and related files required by the CLI.
+
+**Environment variables**
+
+| Variable | Purpose |
+| -------- | ------- |
+| `STARDELTA_FFDEC_ZIP` | At **build** time: path to a local copy of the same pinned zip (checksum must match). Use for offline builds or CI caches. |
+| `STARDELTA_FFDEC_JAR` or `FFDEC_JAR` | At **runtime**: path to `ffdec.jar` if you do not want to use the bundled copy. |
+
+**Manual download** (optional): run `scripts/download-jpexs-ffdec.sh` or `scripts/download-jpexs-ffdec.ps1` from the repo root.
+
+**Optional integration check** (ignored by default): from `src-tauri/`, run  
+`STARDELTA_RUN_JPEXS_INTEGRATION=1 FFDEC_JAR=/path/to/ffdec.jar cargo test --test jpexs_ffdec_smoke -- --ignored`  
+to confirm Java and your `ffdec.jar` path.
+
+**CI caching**: cache either the zip file or the `src-tauri/resources/jpexs/` tree between runs to avoid repeated downloads.
+
+**Upgrading JPEXS**: edit the pinned tag, file name, download URL, and `EXPECTED_ZIP_SHA256_HEX` in `src-tauri/build.rs`, and update the same URL and hash in the download scripts. Use the `digest` field from the [GitHub release API](https://docs.github.com/en/rest/releases/assets) for the zip asset.
+
+**License**: JPEXS is GPL-3.0; see [NOTICE](NOTICE).
+
 ## JSON Patch Format
 
 The JSON patch format is a simple way to describe changes to SWF files. It is a list of operations to perform on the SWF file.
 
-The patch file must include the `swf` section, while `transparent` and `file` operations are optional:
+The patch file must include the `swf` section, while `transparent`, `file`, and `actionscript` are optional:
 
 ```json
 {
   "transparent": [],
   "file": [],
+  "actionscript": [],
   "swf": {
     "modifications": []
   }
@@ -95,50 +123,78 @@ Note: Only SVG files are supported for the source. SVG files should be placed in
 }
 ```
 
+### ActionScript (AS3)
+
+Optional `actionscript` is an array of patches applied **before** the `swf.modifications` merge step. Adding or replacing scripts compiles `.as` source with **JPEXS FFDec** (`-importScript`); **Java** and `ffdec.jar` must be available (see [Development](#development)). Removing ABC tags does **not** invoke JPEXS.
+
+Each patch object supports:
+
+| Field | Used when | Description |
+| ----- | --------- | ----------- |
+| `insert_mode` | always | `"add"`, `"replace"`, or `"remove"`. |
+| `source_file` | `add`, `replace` | Path to `.as` relative to the patch JSON file (required for compile modes; must be omitted for `remove`). |
+| `class_name` | optional | Simple class name; used to rewrite the compiled source in `replace`, to match bytecode when disambiguating JPEXS output, for substring-based `replace`/`remove` targeting, and for `cleanup_symbol_class`. |
+| `package_name` | optional | Package for source rewrite and fully qualified name (`package.class`) when matching bytecode or cleaning symbols. |
+| `symbol_bindings` | optional | Updates the `SymbolClass` tag (not allowed with `remove`). |
+| `doabc_ordinal` | `replace`, `remove` | 0-based index counting only `DoAbc` tags in the SWF (mutually exclusive with `tag_index`). |
+| `tag_index` | `replace`, `remove` | 0-based index into the root `tags` array; must reference a `DoAbc` tag (mutually exclusive with `doabc_ordinal`). |
+| `cleanup_symbol_class` | `remove` only | If `true`, remove `SymbolClass` entries whose `name` exactly matches the fully qualified name (`package_name` + `class_name`) and/or the bare `class_name`. Requires a non-empty `class_name`. |
+
+**Targeting rules**
+
+- **`add`**: appends a new `DoAbc` tag. Do not set `doabc_ordinal` or `tag_index`.
+- **`replace`**: supply `doabc_ordinal` **or** `tag_index` to replace that block; otherwise the first `DoAbc` whose bytecode contains `class_name` is replaced, or the first `DoAbc` if `class_name` is omitted.
+- **`remove`**: supply **exactly one** of `doabc_ordinal`, `tag_index`, or `class_name` (substring match on ABC bytes). Omit `source_file` and `symbol_bindings`.
+
+Bytecode matching uses a simple substring search in ABC data, which can miss or false-match; prefer ordinals or `tag_index` from an exported Movie JSON when possible.
+
+After JPEXS compiles, StarDelta picks which output `DoAbc` block to use by: matching `class_name`, then fully qualified `package_name.class_name`, then a single “novel” block not present in the input SWF; otherwise the first block (with a stderr warning if multiple blocks exist).
+
+Examples: [`example_patch/patches/mainmenu_patch.json`](example_patch/patches/mainmenu_patch.json) (add/replace), [`example_patch/patches/actionscript_remove_example.json`](example_patch/patches/actionscript_remove_example.json) (remove by ordinal).
+
+If you list several `remove` patches, each step runs on the movie left by the previous one (ordinals and `tag_index` shift). Prefer a single remove, remove in **descending** `doabc_ordinal`, or re-export JSON between edits.
+
 ### SWF
 
-The swf operation is used to modify the SWF file's attributes. Supported tags are defined in the [open-flash/swf-types](https://github.com/open-flash/swf-types) repository.
+The swf operation is used to modify the SWF file's attributes. Tag shapes match [open-flash/swf-types](https://github.com/open-flash/swf-types) (the same types used when you export a SWF to JSON). The binary stack is **swf-parser** 0.14 plus a **vendored** [swf-emitter](https://github.com/open-flash/swf-emitter) copy under [`vendor/swf-emitter/`](vendor/swf-emitter/) (see [`docs/dependency-ceiling.md`](docs/dependency-ceiling.md)).
 
-SWF tags must conform to the [SWF 19.0 specification](https://open-flash.github.io/mirrors/swf-spec-19.pdf). Any tags that are not supported will cause an error or unexpected behavior. Tag properties must also conform to the specification.
+SWF tags must conform to the [SWF 19.0 specification](https://open-flash.github.io/mirrors/swf-spec-19.pdf). What actually works in practice is limited by that parser/emitter pair; unknown or edge-case tags may still be represented as raw bytes.
+
+**Two JSON dialects:** (1) **Exported Movie JSON** from “Convert SWF to JSON” uses `serde` field names from `swf-types` (for example `Tag` values use a `"type"` field such as `"DefineShape"`). (2) **Patch files** use the `tag` strings below with a `Tag` suffix (e.g. `"DefineShapeTag"`). The `properties` object is merged into the matching struct; use an exported file as the reference for exact property names and shapes.
 
 Each tag modification must include:
 
-- `tag`: The tag type name (e.g., "DefineShapeTag", "DefineEditTextTag")
-- `id`: The unique identifier for the tag (except for some tags like FileAttributesTag)
-- `properties`: Object containing the properties to modify, which vary by tag type
+- `tag`: The tag type name (e.g., `"DefineShapeTag"`, `"DefineDynamicTextTag"`)
+- `id`: The unique identifier for the tag where applicable (use `0` for tags without a character id, such as `FileAttributesTag`)
+- `properties`: Object with fields to merge into that tag (partial updates are supported for nested objects)
+
+Optional disambiguation (when multiple tags share the same type on the timeline):
+
+- `tag_index`: 0-based index into the root `tags` array; applies only that tag (must match `tag`)
+- `depth` / `character_id`: For `PlaceObjectTag` and `RemoveObjectTag`, limit matches to that depth or character id
+- `frame_label_name`: For `FrameLabelTag`, match only the label with this `name`
 
 #### Common Tag Types
 
 Here are some commonly used tag types and their properties:
 
-**DefineEditTextTag** - Modifies text fields
+**DefineDynamicTextTag** — Editable text (`DefineDynamicText` in swf-types; Flash “edit text”)
 
 ```json
 {
-  "tag": "DefineEditTextTag",
+  "tag": "DefineDynamicTextTag",
   "id": 5,
   "properties": {
-    "bounds": {
-      "x_min": 0,
-      "x_max": 100,
-      "y_min": 0,
-      "y_max": 20
-    },
-    "font_id": 3,
-    "font_class": "Arial",
+    "text": "Hello World",
     "font_size": 12,
-    "color": {
-      "type": "RGB",
-      "red": 16,
-      "green": 22,
-      "blue": 32
-    },
-    "text": "Hello World"
+    "font_class": "Arial"
   }
 }
 ```
 
-**DefineShapeTag** - Modifies shapes
+Export the SWF to JSON to copy accurate `bounds`, `color`, and flag fields for your file.
+
+**DefineShapeTag** — Updates a shape definition. Prefer copying the `DefineShape` object from an exported Movie JSON and merging only the fields you need under `properties` (the struct contains `bounds`, `edge_bounds`, and `shape` with `records` and `initial_styles`).
 
 ```json
 {
@@ -150,20 +206,6 @@ Here are some commonly used tag types and their properties:
       "x_max": 100,
       "y_min": 0,
       "y_max": 100
-    },
-    "styles": {
-      "fill": [
-        {
-          "type": "solid",
-          "color": {
-            "type": "RGB",
-            "red": 255,
-            "green": 0,
-            "blue": 0
-          }
-        }
-      ],
-      "line": []
     }
   }
 }
@@ -271,24 +313,18 @@ Additional platform-specific requirements:
 ### Build Instructions
 
 1. Clone the repository:
-
-   ```sh
+  ```sh
    git clone https://github.com/hierocles/stardelta.git
    cd stardelta
-   ```
-
+  ```
 2. Install frontend dependencies:
-
-   ```sh
+  ```sh
    npm install
-   ```
-
+  ```
 3. Build the Tauri application:
-
-   ```sh
+  ```sh
    npm run tauri build
-   ```
-
+  ```
 4. The built application will be available in the `src-tauri/target/release` directory.
 
 ### Platform Support
@@ -304,19 +340,17 @@ StarDelta is primarily developed and tested on Windows, as it targets Starfield 
 ### Common Issues
 
 1. **SVG Import Fails**
-   - Ensure SVG files use absolute coordinates
-   - Check that all paths are properly closed
-   - Verify the SVG file is in the correct directory relative to the JSON patch
-
+  - Ensure SVG files use absolute coordinates
+  - Check that all paths are properly closed
+  - Verify the SVG file is in the correct directory relative to the JSON patch
 2. **Shape Replacement Issues**
-   - Verify shape IDs match the ones in the original SWF
-   - Check that SVG dimensions are appropriate for the target shape
-   - Ensure all required styles are specified
-
+  - Verify shape IDs match the ones in the original SWF
+  - Check that SVG dimensions are appropriate for the target shape
+  - Ensure all required styles are specified
 3. **Batch Processing Errors**
-   - Verify all paths in configuration.json are correct
-   - Check that all referenced JSON patch files exist
-   - Ensure output directory is writable
+  - Verify all paths in configuration.json are correct
+  - Check that all referenced JSON patch files exist
+  - Ensure output directory is writable
 
 ### Getting Help
 
@@ -325,11 +359,11 @@ If you encounter issues not covered here:
 1. Check the [GitHub Issues](https://github.com/hierocles/stardelta/issues) for similar problems
 2. Enable debug logging by setting the environment variable `RUST_LOG=debug`
 3. Open a new issue with:
-   - The error message
-   - The JSON patch file content
-   - The debug logs
-   - Steps to reproduce the issue
-   - Link to the original SWF file
+  - The error message
+  - The JSON patch file content
+  - The debug logs
+  - Steps to reproduce the issue
+  - Link to the original SWF file
 
 ## Contributing
 
@@ -345,6 +379,7 @@ StarDelta uses several open-source components, each with their own licenses:
 
 #### Core Dependencies
 
+- **[JPEXS Free Flash Decompiler](https://github.com/jindrapetrik/jpexs-decompiler)** - GPL-3.0 (optional bundled CLI for ActionScript; see [NOTICE](NOTICE))
 - **[open-flash/swf-types](https://github.com/open-flash/swf-types)** - MIT License
   - Used for SWF file format definitions and handling
 - **[swf-parser](https://github.com/open-flash/swf-parser)** - MIT License
@@ -381,16 +416,15 @@ The frontend uses various NPM packages, each with their own licenses. Key depend
 ### Legal Notes
 
 1. **Starfield Assets**: This tool does not distribute any Starfield game assets. Users are responsible for ensuring they have the necessary rights to modify game files.
-
 2. **Modified SWF Files**: When distributing mods created with StarDelta, ensure you:
-   - Do not include original game assets
-   - Only distribute the patch files
-   - Include appropriate attribution and licenses
-   - Follow Bethesda's modding guidelines
-
+  - Do not include original game assets
+  - Only distribute the patch files
+  - Include appropriate attribution and licenses
+  - Follow Bethesda's modding guidelines
 3. **Contributions**: By contributing to StarDelta, you agree that your contributions will be licensed under the same MIT License as the project.
 
 For a complete list of dependencies and their licenses, see:
 
 - `Cargo.toml` for Rust dependencies
 - `package.json` for Node.js dependencies
+

@@ -22,8 +22,10 @@ dist-ssr
 *.sln
 *.sw?
 
+src-tauri/resources/jpexs
 src-tauri/target
 src-tauri/gen/schemas
+vendor/**/target
 
 .planning
 .cursor
