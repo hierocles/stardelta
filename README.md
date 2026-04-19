@@ -1,4 +1,4 @@
-# ![StarDelta Logo](assets/StarDelta%20Logo.svg)
+# StarDelta Logo
 
 StarDelta is a tool for creating and applying patches to Starfield UIs. It includes special support for modifying SWF files.
 
@@ -39,7 +39,7 @@ You can patch SWF files either individually or in batch.
 
 ### Video Instructions (YouTube)
 
-[![Watch the video](https://i.ytimg.com/an_webp/HrRikA1y2go/mqdefault_6s.webp?du=3000&sqp=COa5pL0G&rs=AOn4CLD52Ea1JMJYklsO-YRUUksc-sEZ9A)](https://youtu.be/HrRikA1y2go?si=zcIAlfGyJ9Z9JZt3)
+[Watch the video](https://youtu.be/HrRikA1y2go?si=zcIAlfGyJ9Z9JZt3)
 
 #### Installing Patched Files
 
@@ -271,24 +271,18 @@ Additional platform-specific requirements:
 ### Build Instructions
 
 1. Clone the repository:
-
-   ```sh
+  ```sh
    git clone https://github.com/hierocles/stardelta.git
    cd stardelta
-   ```
-
+  ```
 2. Install frontend dependencies:
-
-   ```sh
+  ```sh
    npm install
-   ```
-
+  ```
 3. Build the Tauri application:
-
-   ```sh
+  ```sh
    npm run tauri build
-   ```
-
+  ```
 4. The built application will be available in the `src-tauri/target/release` directory.
 
 ### Platform Support
@@ -304,19 +298,17 @@ StarDelta is primarily developed and tested on Windows, as it targets Starfield 
 ### Common Issues
 
 1. **SVG Import Fails**
-   - Ensure SVG files use absolute coordinates
-   - Check that all paths are properly closed
-   - Verify the SVG file is in the correct directory relative to the JSON patch
-
+  - Ensure SVG files use absolute coordinates
+  - Check that all paths are properly closed
+  - Verify the SVG file is in the correct directory relative to the JSON patch
 2. **Shape Replacement Issues**
-   - Verify shape IDs match the ones in the original SWF
-   - Check that SVG dimensions are appropriate for the target shape
-   - Ensure all required styles are specified
-
+  - Verify shape IDs match the ones in the original SWF
+  - Check that SVG dimensions are appropriate for the target shape
+  - Ensure all required styles are specified
 3. **Batch Processing Errors**
-   - Verify all paths in configuration.json are correct
-   - Check that all referenced JSON patch files exist
-   - Ensure output directory is writable
+  - Verify all paths in configuration.json are correct
+  - Check that all referenced JSON patch files exist
+  - Ensure output directory is writable
 
 ### Getting Help
 
@@ -325,11 +317,11 @@ If you encounter issues not covered here:
 1. Check the [GitHub Issues](https://github.com/hierocles/stardelta/issues) for similar problems
 2. Enable debug logging by setting the environment variable `RUST_LOG=debug`
 3. Open a new issue with:
-   - The error message
-   - The JSON patch file content
-   - The debug logs
-   - Steps to reproduce the issue
-   - Link to the original SWF file
+  - The error message
+  - The JSON patch file content
+  - The debug logs
+  - Steps to reproduce the issue
+  - Link to the original SWF file
 
 ## Contributing
 
@@ -381,16 +373,15 @@ The frontend uses various NPM packages, each with their own licenses. Key depend
 ### Legal Notes
 
 1. **Starfield Assets**: This tool does not distribute any Starfield game assets. Users are responsible for ensuring they have the necessary rights to modify game files.
-
 2. **Modified SWF Files**: When distributing mods created with StarDelta, ensure you:
-   - Do not include original game assets
-   - Only distribute the patch files
-   - Include appropriate attribution and licenses
-   - Follow Bethesda's modding guidelines
-
+  - Do not include original game assets
+  - Only distribute the patch files
+  - Include appropriate attribution and licenses
+  - Follow Bethesda's modding guidelines
 3. **Contributions**: By contributing to StarDelta, you agree that your contributions will be licensed under the same MIT License as the project.
 
 For a complete list of dependencies and their licenses, see:
 
 - `Cargo.toml` for Rust dependencies
 - `package.json` for Node.js dependencies
+
