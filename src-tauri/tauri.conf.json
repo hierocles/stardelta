@@ -13,7 +13,7 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "resources/*"
+      "resources/**/*"
     ]
   },
   "productName": "StarDelta",

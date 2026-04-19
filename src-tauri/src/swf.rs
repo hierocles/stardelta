@@ -11,7 +11,8 @@ use swf_types::{
     fill_styles, shape_records, CapStyle, FillStyle, JoinStyle, LineStyle, Movie, Rect,
     Shape, ShapeRecord, ShapeStyles, StraightSRgba8, Tag, text, tags,
 };
-use tauri::{command, AppHandle};
+use tauri::path::BaseDirectory;
+use tauri::{command, AppHandle, Manager};
 use xmlparser::{Token, Tokenizer};
 use crate::ba2::{Ba2Path, extract_file_from_ba2, is_ba2_path};
 use std::process::Command;
@@ -1784,7 +1785,7 @@ fn apply_actionscript_patches(movie: &mut Movie, patches: &[ActionScriptPatch], 
             .map_err(|e| format!("Failed to write temporary AS file: {}", e))?;
 
         // Compile the ActionScript using JPEXS
-        let abc_data = compile_with_jpexs(handle.clone(), &temp_as_path, &temp_swf_path)?;
+        let abc_data = compile_with_jpexs(handle.clone(), &temp_swf_path, temp_dir.path())?;
 
         // Create a new DoABC tag with the compiled code
         let new_tag = Tag::DoAbc(swf_types::tags::DoAbc {
@@ -1918,49 +1919,106 @@ fn contains_class_name(abc_data: &[u8], class_name: &str) -> bool {
     abc_data.windows(class_bytes.len()).any(|window| window == class_bytes)
 }
 
+fn ffdec_missing_instructions() -> String {
+    "ActionScript compilation requires JPEXS FFDec and a Java runtime.\n\
+     \n\
+     - Install a JRE or JDK and ensure `java` is on your PATH.\n\
+     - Set STARDELTA_FFDEC_JAR or FFDEC_JAR to the path of ffdec.jar from a JPEXS installation.\n\
+     - Or run `cargo build` (or scripts/download-jpexs-ffdec.*) so src-tauri/resources/jpexs/ is populated, then rebuild the app.\n\
+     \n\
+     See the Development section in README.md and NOTICE for third-party terms."
+        .to_string()
+}
+
 fn check_java_installation() -> Result<(), String> {
     let output = Command::new("java")
         .arg("-version")
         .output()
-        .map_err(|_| "Java is not installed or not accessible".to_string())?;
+        .map_err(|_| {
+            format!(
+                "Java (`java`) is not installed or not on PATH.\n{}",
+                ffdec_missing_instructions()
+            )
+        })?;
 
     if !output.status.success() {
-        return Err("Failed to verify Java installation".to_string());
+        return Err(format!(
+            "Java (`java -version`) did not run successfully.\n{}",
+            ffdec_missing_instructions()
+        ));
     }
     Ok(())
 }
 
-fn compile_with_jpexs(handle: AppHandle, as_path: &Path, swf_path: &Path) -> Result<Vec<u8>, String> {
-    // Check Java installation first
+fn resolve_ffdec_jar(handle: &AppHandle) -> Result<PathBuf, String> {
+    for key in ["STARDELTA_FFDEC_JAR", "FFDEC_JAR"] {
+        if let Ok(p) = std::env::var(key) {
+            let path = PathBuf::from(p.trim());
+            if path.is_file() {
+                return Ok(path);
+            }
+            return Err(format!(
+                "Environment variable {key} is set to {:?}, but that file does not exist.\n{}",
+                path,
+                ffdec_missing_instructions()
+            ));
+        }
+    }
+
+    let path = handle.path().resolve("jpexs/ffdec.jar", BaseDirectory::Resource).map_err(|e| {
+        format!(
+            "Could not resolve bundled ffdec.jar: {e}\n{}",
+            ffdec_missing_instructions()
+        )
+    })?;
+
+    if path.is_file() {
+        return Ok(path);
+    }
+
+    Err(format!(
+        "Bundled FFDec was not found at {}.\n{}",
+        path.display(),
+        ffdec_missing_instructions()
+    ))
+}
+
+/// Run JPEXS `-importScript <infile.swf> <outfile.swf> <scriptsfolder>` (see upstream CLI docs).
+fn compile_with_jpexs(handle: AppHandle, in_swf: &Path, scripts_dir: &Path) -> Result<Vec<u8>, String> {
     check_java_installation()?;
 
-    // Create a temporary directory for JPEXS output
+    let resource_path = resolve_ffdec_jar(&handle)?;
+    let jar_dir = resource_path.parent().ok_or_else(|| {
+        format!(
+            "Invalid ffdec.jar path (no parent directory): {}\n{}",
+            resource_path.display(),
+            ffdec_missing_instructions()
+        )
+    })?;
+
+    if !scripts_dir.is_dir() {
+        return Err(format!(
+            "JPEXS script directory not found: {}\n{}",
+            scripts_dir.display(),
+            ffdec_missing_instructions()
+        ));
+    }
+
     let output_dir = TempDir::new()
         .map_err(|e| format!("Failed to create temporary output directory: {}", e))?;
 
-    // Get the path to ffdec.jar from the bundled resources
-    let resource_path = std::env::current_exe()
-        .map_err(|e| format!("Failed to get executable path: {}", e))?
-        .parent()
-        .ok_or_else(|| "Failed to get parent directory".to_string())?
-        .join("resources")
-        .join("ffdec.jar");
-
     println!("Using JPEXS from: {}", resource_path.display());
 
-    // Create a temporary output SWF path
     let output_swf = output_dir.path().join("output.swf");
 
-    // Run JPEXS to import the ActionScript
     let output = Command::new("java")
-        .args([
-            "-jar",
-            resource_path.to_str().unwrap(),
-            "-importScript",
-            as_path.to_str().unwrap(),
-            swf_path.to_str().unwrap(),
-            output_swf.to_str().unwrap(),
-        ])
+        .current_dir(jar_dir)
+        .arg("-jar")
+        .arg(&resource_path)
+        .arg("-importScript")
+        .arg(in_swf)
+        .arg(&output_swf)
+        .arg(scripts_dir)
         .output()
         .map_err(|e| format!("Failed to execute JPEXS: {}", e))?;
 

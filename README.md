@@ -46,6 +46,29 @@ You can patch SWF files either individually or in batch.
 1. Move the patched files to the Starfield Data directory, overwriting if necessary
 2. Alternatively, use your preferred package manager to install the "Interface" folder as a mod
 
+## Development
+
+Building StarDelta requires [Bun](https://bun.sh/), [Rust](https://www.rust-lang.org/), and a **Java runtime** on your `PATH` if you use ActionScript-related SWF features (JPEXS runs as `java -jar ffdec.jar`).
+
+### JPEXS / FFDec (ActionScript compilation)
+
+On the first `cargo build`, `src-tauri/build.rs` downloads a **pinned** official portable archive (`ffdec_<version>.zip` from [jpexs-decompiler releases](https://github.com/jindrapetrik/jpexs-decompiler/releases)), verifies its **SHA-256**, and extracts it to `src-tauri/resources/jpexs/` (gitignored). That directory includes `ffdec.jar`, `lib/`, and related files required by the CLI.
+
+**Environment variables**
+
+| Variable | Purpose |
+| -------- | ------- |
+| `STARDELTA_FFDEC_ZIP` | At **build** time: path to a local copy of the same pinned zip (checksum must match). Use for offline builds or CI caches. |
+| `STARDELTA_FFDEC_JAR` or `FFDEC_JAR` | At **runtime**: path to `ffdec.jar` if you do not want to use the bundled copy. |
+
+**Manual download** (optional): run `scripts/download-jpexs-ffdec.sh` or `scripts/download-jpexs-ffdec.ps1` from the repo root.
+
+**CI caching**: cache either the zip file or the `src-tauri/resources/jpexs/` tree between runs to avoid repeated downloads.
+
+**Upgrading JPEXS**: edit the pinned tag, file name, download URL, and `EXPECTED_ZIP_SHA256_HEX` in `src-tauri/build.rs`, and update the same URL and hash in the download scripts. Use the `digest` field from the [GitHub release API](https://docs.github.com/en/rest/releases/assets) for the zip asset.
+
+**License**: JPEXS is GPL-3.0; see [NOTICE](NOTICE).
+
 ## JSON Patch Format
 
 The JSON patch format is a simple way to describe changes to SWF files. It is a list of operations to perform on the SWF file.
@@ -328,6 +351,7 @@ StarDelta uses several open-source components, each with their own licenses:
 
 #### Core Dependencies
 
+- **[JPEXS Free Flash Decompiler](https://github.com/jindrapetrik/jpexs-decompiler)** - GPL-3.0 (optional bundled CLI for ActionScript; see [NOTICE](NOTICE))
 - **[open-flash/swf-types](https://github.com/open-flash/swf-types)** - MIT License
   - Used for SWF file format definitions and handling
 - **[swf-parser](https://github.com/open-flash/swf-parser)** - MIT License

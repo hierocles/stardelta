@@ -14,6 +14,9 @@ build = "build.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+ureq = { version = "2.12", default-features = false, features = ["tls"] }
+sha2 = "0.10"
+zip = { version = "2.4", default-features = false, features = ["deflate"] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
